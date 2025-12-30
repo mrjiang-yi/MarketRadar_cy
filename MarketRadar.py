@@ -52,13 +52,8 @@ RECEIVER_EMAIL = os.environ.get("RECEIVER_EMAIL")
 
 # --- 本地测试防呆判断 ---
 if not SENDER_EMAIL:
-    print(" ❌ not SENDER_EMAIL")
-    pass
-if not SENDER_PASSWORD:
-    print(" ❌ not SENDER_PASSWORD")
-    pass
-if not RECEIVER_EMAIL:
-    print(" ❌ not RECEIVER_EMAIL")
+    # 这里的 pass 是为了防止本地运行时如果没有配环境变量报错
+    # 如果你在本地跑，请确保环境变量已设置，或在此处临时硬编码(不推荐)
     pass
 
 # --- 数据查询时间段 ---
@@ -327,11 +322,11 @@ class MarketFetcher:
             
         return df
 
-def process_and_save_group(fetcher, targets, filename_prefix):
+def fetch_group_data(fetcher, targets, group_name):
     """
-    通用函数：使用多线程并发处理一组目标并保存到指定文件
+    修改后的通用函数：不直接写文件，而是返回数据字典
     """
-    print(f"\n🚀 开始处理任务组: 输出到 {filename_prefix} (并发模式)")
+    print(f"\n🚀 开始处理任务组: {group_name} (并发模式)")
     
     kline_list = []
     
@@ -355,7 +350,6 @@ def process_and_save_group(fetcher, targets, filename_prefix):
             return None
 
     # 使用 ThreadPoolExecutor 进行并发
-    # max_workers=4 是一个比较安全的数值，既提高了速度又不容易被封IP
     with ThreadPoolExecutor(max_workers=4) as executor:
         # 提交所有任务
         future_to_name = {executor.submit(fetch_task, name, config): name for name, config in targets.items()}
@@ -365,7 +359,6 @@ def process_and_save_group(fetcher, targets, filename_prefix):
             name = future_to_name[future]
             try:
                 # === 核心修改：设置 15 秒超时 ===
-                # 如果这个任务 15 秒都没返回结果，直接抛出 TimeoutError，不再等待
                 result = future.result(timeout=15)
                 
                 if result:
@@ -377,7 +370,7 @@ def process_and_save_group(fetcher, targets, filename_prefix):
             except Exception as e:
                 print(f"❌ 处理 {name} 结果时出错: {e}")
 
-    # 排序：因为并发返回顺序是乱的，所以必须按日期和名称排序
+    # 排序
     if kline_list:
         temp_df = pd.DataFrame(kline_list)
         temp_df.sort_values(by=['date', 'name'], ascending=[False, True], inplace=True)
@@ -385,39 +378,7 @@ def process_and_save_group(fetcher, targets, filename_prefix):
     else:
         final_kline_data = []
 
-    # --- 保存文件逻辑 ---
-    meta_data = {
-        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "date_range": f"{START_DATE} to {END_DATE}",
-        "group_name": filename_prefix
-    }
-    
-    # 确定文件名
-    if "Market_Data" in filename_prefix or "指数" in filename_prefix:
-        output_filename = "指数.json"
-    else:
-        output_filename = f"{filename_prefix}.json"
-
-    print(f"💾 正在写入 JSON 文件: {output_filename} ...")
-    
-    try:
-        with open(output_filename, 'w', encoding='utf-8') as f:
-            f.write('{\n')
-            f.write(f'    "meta": {json.dumps(meta_data, ensure_ascii=False)},\n')
-            f.write('    "market_klines": [\n')
-            
-            total_items = len(final_kline_data)
-            for i, item in enumerate(final_kline_data):
-                line_str = json.dumps(item, ensure_ascii=False)
-                comma = "," if i < total_items - 1 else ""
-                f.write(f'        {line_str}{comma}\n')
-                
-            f.write('    ]\n')
-            f.write('}')
-            
-        print(f"✅ 成功! 文件 {output_filename} 已生成。")
-    except Exception as e:
-        print(f"❌ 写入 JSON 失败: {e}")
+    return final_kline_data
 
 
 def send_email(subject, body, attachment_files):
@@ -497,27 +458,50 @@ def generate_report():
 
     fetcher = MarketFetcher()
     
-    process_and_save_group(fetcher, TARGETS_GLOBAL, "指数")
-    process_and_save_group(fetcher, TARGETS_HSTECH_TOP20, "恒生科技")
-    process_and_save_group(fetcher, TARGETS_VIETNAM_TOP10, "新兴市场")
-    process_and_save_group(fetcher, TARGETS_US_MAG7, "美股七巨头")
-    process_and_save_group(fetcher, TARGETS_HK_PHARMA, "港股创新药")
+    # 汇总所有数据到一个大字典
+    all_data_collection = {
+        "meta": {
+            "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "date_range": f"{START_DATE} to {END_DATE}",
+            "description": "Global Market Data Consolidated Report"
+        },
+        "data": {}
+    }
+
+    # 1. 抓取指数数据
+    all_data_collection["data"]["指数"] = fetch_group_data(fetcher, TARGETS_GLOBAL, "指数")
+
+    # 2. 抓取恒生科技
+    all_data_collection["data"]["恒生科技"] = fetch_group_data(fetcher, TARGETS_HSTECH_TOP20, "恒生科技")
     
-    print("\n🎉 所有数据抓取任务处理完成！")
+    # 3. 抓取新兴市场
+    all_data_collection["data"]["新兴市场"] = fetch_group_data(fetcher, TARGETS_VIETNAM_TOP10, "新兴市场")
     
-    generated_files = [
-        "指数.json",
-        "恒生科技.json",
-        "新兴市场.json",
-        "美股七巨头.json",
-        "港股创新药.json"
-    ]
+    # 4. 抓取美股七巨头
+    all_data_collection["data"]["美股七巨头"] = fetch_group_data(fetcher, TARGETS_US_MAG7, "美股七巨头")
+    
+    # 5. 抓取港股创新药
+    all_data_collection["data"]["港股创新药"] = fetch_group_data(fetcher, TARGETS_HK_PHARMA, "港股创新药")
+    
+    print("\n🎉 所有数据抓取任务处理完成！正在合并写入文件...")
+
+    # === 合并写入到一个 JSON 文件 ===
+    output_filename = "金融数据.json"
+    try:
+        with open(output_filename, 'w', encoding='utf-8') as f:
+            json.dump(all_data_collection, f, ensure_ascii=False, indent=4)
+        print(f"✅ 成功! 所有数据已合并写入 {output_filename}。")
+    except Exception as e:
+        print(f"❌ 写入合并 JSON 失败: {e}")
+    
+    # === 发送邮件逻辑 ===
+    generated_files = [output_filename]
     
     email_subject = f"全球市场K线数据报告_{datetime.now().strftime('%Y-%m-%d')}"
     email_body = f"""
     您好，
     
-    这是今天的全量市场 K 线数据（由 MarketRadar 自动生成）。
+    这是今天的全量市场 K 线数据（已合并）。
     生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
     数据范围: {START_DATE} 至 {END_DATE}
     
