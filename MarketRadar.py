@@ -74,6 +74,8 @@ TARGETS_GLOBAL = {
     "恒生科技":     {"ak": "HSTECH",  "yf": "^HSTECH",  "type": "index_hk"},
     "恒生指数":     {"ak": "HSI",     "yf": "^HSI",     "type": "index_hk"},
     "黄金(COMEX)":  {"ak": "GC",      "yf": "GC=F",     "type": "future_foreign"},  
+    "白银(COMEX)":  {"ak": "SI",      "yf": "SI=F",     "type": "future_foreign"},  # 新增：白银
+    "铜(COMEX)":    {"ak": "HG",      "yf": "HG=F",     "type": "future_foreign"},  # 新增：铜
     "上海金":       {"ak": "Au99.99", "yf": None,       "type": "gold_cn"}, 
     "VNM(ETF)":    {"ak": None,      "yf": "VNM",      "type": "etf"},     
 }
