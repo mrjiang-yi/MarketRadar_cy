@@ -12,6 +12,9 @@ import time
 import random
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 
+# === 引入工具库 ===
+import utils
+
 # === 邮件相关库 ===
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -52,31 +55,33 @@ RECEIVER_EMAIL = os.environ.get("RECEIVER_EMAIL")
 
 # --- 本地测试防呆判断 ---
 if not SENDER_EMAIL:
-    # 这里的 pass 是为了防止本地运行时如果没有配环境变量报错
-    # 如果你在本地跑，请确保环境变量已设置，或在此处临时硬编码(不推荐)
     pass
 
 # --- 数据查询时间段 ---
-START_DATE = "2025-12-01"
+# REPORT_START_DATE: 报告中K线展示的起始时间 (用户配置)
+REPORT_START_DATE = "2025-12-01"
+# FETCH_START_DATE: API 实际拉取的起始时间 (回溯500天，确保能计算 MA250 年线)
+FETCH_START_DATE = (datetime.now() - timedelta(days=500)).strftime("%Y-%m-%d")
 END_DATE = datetime.now().strftime("%Y-%m-%d")
 
 # ------------------------------------------------
-# 任务组 1: 全球市场 (原有配置) -> 存为 指数.json
+# 任务组 1: 全球市场 (指数.json)
 # ------------------------------------------------
 TARGETS_GLOBAL = {
     "纳斯达克":     {"ak": ".IXIC",   "yf": "^IXIC",    "type": "index_us"},
     "标普500":      {"ak": ".INX",    "yf": "^GSPC",    "type": "index_us"},
     "恒生科技":     {"ak": "HSTECH",  "yf": "^HSTECH",  "type": "index_hk"},
     "恒生指数":     {"ak": "HSI",     "yf": "^HSI",     "type": "index_hk"},
+    "越南胡志明指数": {"ak": None,      "yf": "^VNINDEX", "type": "index_global"}, # 新增
     "黄金(COMEX)":  {"ak": "GC",      "yf": "GC=F",     "type": "future_foreign"},  
-    "白银(COMEX)":  {"ak": "SI",      "yf": "SI=F",     "type": "future_foreign"},  # 新增：白银
-    "铜(COMEX)":    {"ak": "HG",      "yf": "HG=F",     "type": "future_foreign"},  # 新增：铜
+    "白银(COMEX)":  {"ak": "SI",      "yf": "SI=F",     "type": "future_foreign"},  
+    "铜(COMEX)":    {"ak": "HG",      "yf": "HG=F",     "type": "future_foreign"}, 
     "上海金":       {"ak": "Au99.99", "yf": None,       "type": "gold_cn"}, 
     "VNM(ETF)":    {"ak": None,      "yf": "VNM",      "type": "etf"},     
 }
 
 # ------------------------------------------------
-# 任务组 2: 恒生科技主要成份股 (Top 20) -> 存为 恒生科技.json
+# 任务组 2: 恒生科技主要成份股 (Top 20)
 # ------------------------------------------------
 TARGETS_HSTECH_TOP20 = {
     "美团-W":       {"ak": "03690", "yf": "3690.HK", "type": "stock_hk"},
@@ -102,7 +107,7 @@ TARGETS_HSTECH_TOP20 = {
 }
 
 # ------------------------------------------------
-# 任务组 3: 越南十大股票 -> 存为 新兴市场.json
+# 任务组 3: 越南十大股票
 # ------------------------------------------------
 TARGETS_VIETNAM_TOP10 = {
     "越南繁荣银行(VPB)":    {"ak": None, "yf": "VPB.VN", "type": "stock_vn"},
@@ -118,7 +123,7 @@ TARGETS_VIETNAM_TOP10 = {
 }
 
 # ------------------------------------------------
-# 任务组 4: 美股七巨头 -> 存为 美股七巨头.json
+# 任务组 4: 美股七巨头
 # ------------------------------------------------
 TARGETS_US_MAG7 = {
     "苹果(AAPL)":    {"ak": None, "yf": "AAPL",  "type": "stock_us"},
@@ -131,7 +136,7 @@ TARGETS_US_MAG7 = {
 }
 
 # ------------------------------------------------
-# 任务组 5: 港股创新药 -> 存为 港股创新药.json
+# 任务组 5: 港股创新药
 # ------------------------------------------------
 TARGETS_HK_PHARMA = {
     "信达生物":       {"ak": "01801", "yf": "1801.HK", "type": "stock_hk"},
@@ -254,7 +259,8 @@ class MarketFetcher:
             print(f"   ⚡ [YFinance] 请求: {symbol}{retry_msg} ...", end="", flush=True)
             
             try:
-                df = yf.download(symbol, start=START_DATE, end=END_DATE, progress=False, auto_adjust=False)
+                # 使用 FETCH_START_DATE (回溯500天) 以确保均线计算正确
+                df = yf.download(symbol, start=FETCH_START_DATE, end=END_DATE, progress=False, auto_adjust=False)
                 if not df.empty:
                     df = df.reset_index()
                     if isinstance(df.columns, pd.MultiIndex):
@@ -280,7 +286,8 @@ class MarketFetcher:
         
         symbol_map = {
             "纳斯达克": "^IXIC", "标普500": "^GSPC", 
-            "黄金(COMEX)": "GCUSD", "VNM(ETF)": "VNM"
+            "黄金(COMEX)": "GCUSD", "VNM(ETF)": "VNM",
+            "越南胡志明指数": "^VNINDEX"
         }
         symbol = symbol_map.get(name)
         
@@ -288,7 +295,8 @@ class MarketFetcher:
 
         print(f"   ⚡ [FMP] 请求: {symbol} ...", end="", flush=True)
         try:
-            url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{symbol}?from={START_DATE}&to={END_DATE}&apikey={key}"
+            # 使用 FETCH_START_DATE
+            url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{symbol}?from={FETCH_START_DATE}&to={END_DATE}&apikey={key}"
             res = requests.get(url, timeout=10) 
             data = res.json()
             if "historical" in data:
@@ -307,10 +315,13 @@ class MarketFetcher:
         time.sleep(random.uniform(1.0, 3.0))
         
         # 1. 尝试 AkShare (函数内自带重试机制)
-        df = self.fetch_akshare(config.get("ak"), config.get("type"))
-        df = self.normalize_df(df, name)
+        # 只有当配置了 ak 符号时才调用
+        df = pd.DataFrame()
+        if config.get("ak"):
+            df = self.fetch_akshare(config.get("ak"), config.get("type"))
+            df = self.normalize_df(df, name)
         
-        # 2. 失败则尝试 YFinance (函数内自带重试机制)
+        # 2. 失败或未配置 AkShare 则尝试 YFinance
         if df.empty:
             df = self.fetch_yfinance(config.get("yf"))
             df = self.normalize_df(df, name)
@@ -324,47 +335,68 @@ class MarketFetcher:
 
 def fetch_group_data(fetcher, targets, group_name):
     """
-    修改后的通用函数：不直接写文件，而是返回数据字典
+    修改后的通用函数：返回 (K线数据列表, 均线数据列表)
     """
     print(f"\n🚀 开始处理任务组: {group_name} (并发模式)")
     
     kline_list = []
+    ma_list = []
     
     # 定义单个任务函数 (用于线程池)
     def fetch_task(name, config):
         try:
+            # 1. 获取长周期数据 (500天+)
             df = fetcher.get_kline_data(name, config)
             if df.empty:
-                return None
+                return None, None
             
-            # 过滤时间段
-            df = df[(df['date'] >= pd.to_datetime(START_DATE)) & (df['date'] <= pd.to_datetime(END_DATE))]
-            if df.empty:
-                return None
+            # 2. 确保按照日期排序
+            df = df.sort_values(by='date', ascending=True)
+
+            # 3. 计算均线 (基于长周期数据)
+            # utils.calculate_ma 返回的是一个列表，里面是一个字典
+            ma_info_list = utils.calculate_ma(df) 
+            ma_info = ma_info_list[0] if ma_info_list else None
+
+            # 4. 切片为用户配置的短周期 (用于展示 K线)
+            # 使用 REPORT_START_DATE 进行过滤，防止JSON过大
+            df_slice = df[(df['date'] >= pd.to_datetime(REPORT_START_DATE)) & (df['date'] <= pd.to_datetime(END_DATE))].copy()
+            
+            if df_slice.empty:
+                # 即使近期无K线，如果MA计算成功，也可以返回MA，但通常两者共存
+                return None, ma_info
             
             # 转换日期格式
-            df['date'] = df['date'].dt.strftime('%Y-%m-%d')
-            return df.to_dict(orient='records')
+            df_slice['date'] = df_slice['date'].dt.strftime('%Y-%m-%d')
+            kline_records = df_slice.to_dict(orient='records')
+            
+            return kline_records, ma_info
+
         except Exception as e:
             print(f"❌ 任务 {name} 异常: {e}")
-            return None
+            return None, None
 
     # 使用 ThreadPoolExecutor 进行并发
     with ThreadPoolExecutor(max_workers=4) as executor:
         # 提交所有任务
         future_to_name = {executor.submit(fetch_task, name, config): name for name, config in targets.items()}
         
-        # 获取结果 (加入超时保护，防止单线程无限挂起)
+        # 获取结果
         for future in as_completed(future_to_name):
             name = future_to_name[future]
             try:
-                # === 核心修改：设置 15 秒超时 ===
+                # 设置 15 秒超时
                 result = future.result(timeout=15)
+                klines, ma = result # unpack result
                 
-                if result:
-                    kline_list.extend(result)
+                if klines:
+                    kline_list.extend(klines)
                 else:
-                    print(f"⚠️ 警告: 无法获取 {name} 的有效数据，已舍弃")
+                    print(f"⚠️ 警告: 无法获取 {name} 的K线数据")
+                
+                if ma:
+                    ma_list.append(ma)
+                    
             except TimeoutError:
                 print(f" 💀 严重超时: 获取 {name} 超过15秒无响应，强制跳过！")
             except Exception as e:
@@ -378,7 +410,7 @@ def fetch_group_data(fetcher, targets, group_name):
     else:
         final_kline_data = []
 
-    return final_kline_data
+    return final_kline_data, ma_list
 
 
 def send_email(subject, body, attachment_files):
@@ -446,7 +478,8 @@ def get_all_kline_data():
     对外接口函数：执行所有K线抓取任务并返回字典
     """
     print(f"📅 多市场数据采集器 (MarketRadar - Module)")
-    print(f"🕒 时间段: {START_DATE} 至 {END_DATE}")
+    print(f"🕒 报告周期: {REPORT_START_DATE} 至 {END_DATE}")
+    print(f"🕒 计算周期: {FETCH_START_DATE} 至 {END_DATE}")
     
     fetcher = MarketFetcher()
     
@@ -454,28 +487,44 @@ def get_all_kline_data():
     all_data_collection = {
         "meta": {
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "date_range": f"{START_DATE} to {END_DATE}",
+            "date_range": f"{REPORT_START_DATE} to {END_DATE}",
             "description": "Global Market Data Consolidated Report"
         },
-        "data": {}
+        "data": {},
+        "ma_data": [] # 专门存放均线数据
     }
 
+    all_ma_data = []
+
     # 1. 抓取指数数据
-    all_data_collection["data"]["指数"] = fetch_group_data(fetcher, TARGETS_GLOBAL, "指数")
+    data_idx, ma_idx = fetch_group_data(fetcher, TARGETS_GLOBAL, "指数")
+    all_data_collection["data"]["指数"] = data_idx
+    all_ma_data.extend(ma_idx)
 
     # 2. 抓取恒生科技
-    all_data_collection["data"]["恒生科技"] = fetch_group_data(fetcher, TARGETS_HSTECH_TOP20, "恒生科技")
+    data_hstech, ma_hstech = fetch_group_data(fetcher, TARGETS_HSTECH_TOP20, "恒生科技")
+    all_data_collection["data"]["恒生科技"] = data_hstech
+    all_ma_data.extend(ma_hstech)
     
     # 3. 抓取新兴市场
-    all_data_collection["data"]["新兴市场"] = fetch_group_data(fetcher, TARGETS_VIETNAM_TOP10, "新兴市场")
+    data_vn, ma_vn = fetch_group_data(fetcher, TARGETS_VIETNAM_TOP10, "新兴市场")
+    all_data_collection["data"]["新兴市场"] = data_vn
+    all_ma_data.extend(ma_vn)
     
     # 4. 抓取美股七巨头
-    all_data_collection["data"]["美股七巨头"] = fetch_group_data(fetcher, TARGETS_US_MAG7, "美股七巨头")
+    data_us, ma_us = fetch_group_data(fetcher, TARGETS_US_MAG7, "美股七巨头")
+    all_data_collection["data"]["美股七巨头"] = data_us
+    all_ma_data.extend(ma_us)
     
     # 5. 抓取港股创新药
-    all_data_collection["data"]["港股创新药"] = fetch_group_data(fetcher, TARGETS_HK_PHARMA, "港股创新药")
+    data_hk, ma_hk = fetch_group_data(fetcher, TARGETS_HK_PHARMA, "港股创新药")
+    all_data_collection["data"]["港股创新药"] = data_hk
+    all_ma_data.extend(ma_hk)
     
-    print("\n🎉 K线数据抓取任务处理完成！")
+    # 将汇总的均线数据存入
+    all_data_collection["ma_data"] = all_ma_data
+    
+    print("\n🎉 K线数据抓取 & 均线计算 任务处理完成！")
     return all_data_collection
 
 if __name__ == "__main__":

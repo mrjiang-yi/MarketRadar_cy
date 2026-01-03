@@ -1,15 +1,14 @@
 #!/usr/bin/env python
 # -*- coding:utf-8 -*-
 """
-数据获取脚本 (离线优先版)
+数据获取脚本 (离线优先版 + 多源备用)
 功能：获取全球主要经济体的宏观经济数据、汇率、债券及市场指数。
 核心特性：
 1. [优先级] 优先读取 manual_data.json，若存在则跳过在线获取。
-2. [修复] VIX 获取报错及虚假成功日志。
-3. [修复] 屏蔽 Pandas 日期解析警告。
-4. [清洗] 所有数值强制保留两位小数。
-5. [增强] 强制去除同一日期的重复数据，保留最新记录。
-6. [统一] 中美日国债数据结构统一为宽表格式 ({"日期":..., "1年":..., "10年":...})。
+2. [多源] 引入 Alpha Vantage 作为美股/宏观数据的备用源。
+3. [清洗] 所有数值强制保留两位小数。
+4. [增强] 强制去除同一日期的重复数据，保留最新记录。
+5. [统一] 中美日国债数据结构统一为宽表格式。
 """
 
 import json
@@ -33,6 +32,7 @@ warnings.filterwarnings("ignore", message=".*Could not infer format.*")
 # ==============================================================================
 
 MANUAL_DATA_FILE = "manual_data.json"
+ALPHA_VANTAGE_KEY = os.environ.get("ALPHA_VANTAGE_KEY", "DEMO") # 请确保环境变量设置
 
 def get_retry_session(retries=3, backoff_factor=1, status_forcelist=(500, 502, 503, 504)):
     """创建一个带有自动重试功能的 Requests Session"""
@@ -70,7 +70,7 @@ def validate_recent_data(df, date_col="日期", days=90):
     if df is None or df.empty:
         return False
     try:
-        # 兼容字典列表格式（如果是process_df后的结果）
+        # 兼容字典列表格式
         if isinstance(df, list) and len(df) > 0:
             last_record = df[-1]
             if date_col in last_record:
@@ -92,14 +92,17 @@ def validate_recent_data(df, date_col="日期", days=90):
             return False
         return True
     except Exception as e:
-        # 验证出错时不阻断流程
         return True
 
-def call_with_retry(func, name, fallback_func=None, retries=3, check_freshness=False, *args, **kwargs):
-    """通用重试与备选调用函数"""
+def call_with_retry(func, name, fallback_funcs=None, retries=3, check_freshness=False, *args, **kwargs):
+    """
+    通用重试与多级备选调用函数
+    fallback_funcs: 可是单个函数或函数列表
+    """
+    # 1. 尝试主函数
     for i in range(retries):
         try:
-            print(f"[{name}] 正在获取 (尝试 {i+1}/{retries})...")
+            print(f"[{name}] 正在获取 (主接口, 尝试 {i+1}/{retries})...")
             result = func(*args, **kwargs)
             
             if result is None or (isinstance(result, pd.DataFrame) and result.empty):
@@ -113,18 +116,26 @@ def call_with_retry(func, name, fallback_func=None, retries=3, check_freshness=F
             return result
         except Exception as e:
             if i == retries - 1:
-                print(f"[{name}] 尝试失败: {e}")
+                print(f"[{name}] 主接口尝试失败: {e}")
             time.sleep(2)
     
-    if fallback_func:
-        print(f"[{name}] 主接口失败/数据过旧，尝试备选接口 (Fallback)...")
-        try:
-            result = fallback_func()
-            if result is not None and not (isinstance(result, pd.DataFrame) and result.empty):
-                print(f"[{name}] 备选接口获取成功。")
-                return result
-        except Exception as e:
-            print(f"[{name}] 备选接口也失败了: {e}")
+    # 2. 尝试备选函数列表
+    if fallback_funcs:
+        if not isinstance(fallback_funcs, list):
+            fallback_funcs = [fallback_funcs]
+            
+        for idx, fallback in enumerate(fallback_funcs):
+            print(f"[{name}] 尝试备选接口 {idx+1}...")
+            try:
+                result = fallback()
+                if result is not None and not (isinstance(result, pd.DataFrame) and result.empty):
+                    # 备选接口的数据也建议简单验证一下新鲜度，但不强制抛错
+                    if check_freshness:
+                        validate_recent_data(result) 
+                    print(f"[{name}] 备选接口 {idx+1} 获取成功。")
+                    return result
+            except Exception as e:
+                print(f"[{name}] 备选接口 {idx+1} 失败: {e}")
             
     print(f"[{name}] 所有途径均无法获取有效数据。")
     return pd.DataFrame()
@@ -140,7 +151,37 @@ def round_data(data):
     return data
 
 # ==============================================================================
-# 数据获取逻辑
+# 数据获取逻辑 - Alpha Vantage (新增)
+# ==============================================================================
+
+def fetch_alpha_vantage_indicator(indicator, interval="monthly"):
+    """
+    通用 Alpha Vantage 经济指标获取
+    indicator: REAL_GDP, CPI, UNEMPLOYMENT, RETAIL_SALES, DURABLE_GOODS, TREASURY_YIELD
+    """
+    url = "https://www.alphavantage.co/query"
+    params = {
+        "function": indicator,
+        "interval": interval, 
+        "apikey": ALPHA_VANTAGE_KEY
+    }
+    try:
+        r = SESSION.get(url, params=params, timeout=TIMEOUT)
+        data = r.json()
+        if "data" in data:
+            df = pd.DataFrame(data["data"])
+            df.rename(columns={"date": "日期", "value": "现值"}, inplace=True)
+            # 统一转换 value 为 float
+            df["现值"] = pd.to_numeric(df["现值"], errors='coerce')
+            # 如果是百分比数据，Alpha Vantage通常直接给数值 (e.g. 3.5 for 3.5%)
+            # 具体需根据指标微调，这里保持原始数值
+            return df
+    except Exception as e:
+        print(f"[Alpha Vantage] Error fetching {indicator}: {e}")
+    return pd.DataFrame()
+
+# ==============================================================================
+# 数据获取逻辑 - Jin10 & AKShare
 # ==============================================================================
 
 def fetch_jin10_base(attr_id, start_date_str):
@@ -199,7 +240,8 @@ def fetch_jin10_base(attr_id, start_date_str):
         return final_df
     return pd.DataFrame()
 
-# Fallback functions
+# --- Fallback Wrappers ---
+
 def fetch_china_cpi_fallback():
     try: return ak.macro_china_cpi_monthly()
     except: return pd.DataFrame()
@@ -212,18 +254,27 @@ def fetch_china_pmi_fallback():
     try: return ak.macro_china_pmi_yearly()
     except: return pd.DataFrame()
 
-def fetch_usa_cpi_fallback():
+# 美国数据备选：AkShare -> Alpha Vantage
+def fetch_usa_cpi_fallback_ak():
     try: return ak.macro_usa_cpi_monthly()
     except: return pd.DataFrame()
 
-def fetch_usa_unemployment_fallback():
+def fetch_usa_cpi_fallback_av():
+    return fetch_alpha_vantage_indicator("CPI")
+
+def fetch_usa_unemployment_fallback_ak():
     try: return ak.macro_usa_unemployment_rate()
     except: return pd.DataFrame()
+
+def fetch_usa_unemployment_fallback_av():
+    return fetch_alpha_vantage_indicator("UNEMPLOYMENT")
+
+def fetch_usa_retail_fallback_av():
+    return fetch_alpha_vantage_indicator("RETAIL_SALES")
 
 def fetch_latest_yf(ticker, name):
     """yfinance 获取最新一天的数据"""
     try:
-        # 增加容错，防止 ticker 初始化失败
         t = yf.Ticker(ticker)
         hist = t.history(period="5d")
         
@@ -241,7 +292,6 @@ def fetch_latest_yf(ticker, name):
 
 def fetch_us_bond_yields_unified():
     """获取美国国债数据并转换为统一的宽表格式"""
-    # 映射关系：Key为输出的列名，Value为Yahoo Finance的代码
     tickers_map = {
         "13周": "^IRX",
         "5年": "^FVX",
@@ -249,7 +299,6 @@ def fetch_us_bond_yields_unified():
         "30年": "^TYX"
     }
     
-    # 暂存所有结果
     temp_results = {}
     latest_date = None
     
@@ -259,23 +308,24 @@ def fetch_us_bond_yields_unified():
             item = data[0]
             current_date = item["日期"]
             val = item["最新值"]
-            
-            # 记录最新的日期
             if latest_date is None or current_date > latest_date:
                 latest_date = current_date
-            
-            # 如果日期不是同一天，可能会有数据对齐问题，这里简化处理，
-            # 假设最新获取的都是最近一个交易日的数据。
-            # 严格来说应该按日期合并，但这里为了保持宽表结构简单，我们以最新日期为准。
             temp_results[label] = val
 
     if not temp_results or not latest_date:
+        # Fallback to Alpha Vantage if YFinance fails
+        print("[美国国债] YFinance 失败，尝试 Alpha Vantage...")
+        try:
+            df_av = fetch_alpha_vantage_indicator("TREASURY_YIELD", interval="daily")
+            if not df_av.empty:
+                latest_row = df_av.iloc[0] # AV 通常是降序，第一个是最新
+                return [{"日期": latest_row["日期"], "10年": latest_row["现值"]}] # AV只给10年期benchmark
+        except:
+            pass
         return []
 
-    # 构造宽表的一行数据
     row = {"日期": latest_date}
     row.update(temp_results)
-    
     return [row]
 
 def fetch_china_lpr_optimized():
@@ -448,7 +498,6 @@ def process_df(df, date_col="日期", value_cols=None, start_date_dt=None):
         filtered[date_col] = filtered[date_col].dt.strftime('%Y-%m-%d')
         
         # 核心修复：按日期去重，保留最后一条数据
-        # 这解决了“同一天有多个数据”或数据源返回多次更新数据的问题
         filtered = filtered.drop_duplicates(subset=[date_col], keep='last')
         
         if value_cols:
@@ -478,7 +527,7 @@ def get_data_main():
     end_date_ak = end_date_dt.strftime("%Y%m%d")
 
     data_store = {"market_fx": {}, "china": {}, "usa": {}, "japan": {}}
-    print(">>> 开始数据获取任务 (离线优先版)...")
+    print(">>> 开始数据获取任务 (离线优先版 + 多源备用)...")
 
     # -------------------------------------------------------------------------
     # 1. 市场指数与汇率
@@ -492,16 +541,14 @@ def get_data_main():
     }
     
     for name, ticker in tickers.items():
-        # 优先级 1: 离线手动
         manual_res = get_manual_fallback("market_fx", name)
         if manual_res:
             res = manual_res
             print(f"[{name}] 优先使用离线手动数据。")
         else:
-            # 优先级 2: 在线
             res = fetch_latest_yf(ticker, name)
             if not res:
-                print(f"[{name}] 获取失败 (无在线及离线数据)。")
+                print(f"[{name}] 获取失败。")
             else:
                 print(f"[{name}] 获取成功。")
         
@@ -514,28 +561,23 @@ def get_data_main():
     print("\n--- 正在获取: 中国经济数据 ---")
     china = data_store["china"]
     
-    def check_and_store(cat, key, fetch_call, **kwargs):
-        # 优先级 1: 离线手动
+    def check_and_store(cat, key, fetch_call, fallback_funcs=None, **kwargs):
         manual_res = get_manual_fallback(cat, key)
         if manual_res:
             print(f"[{key}] 优先使用离线手动数据。")
             return manual_res
 
-        # 优先级 2: 在线
-        df = call_with_retry(fetch_call, key, **kwargs)
+        df = call_with_retry(fetch_call, key, fallback_funcs=fallback_funcs, **kwargs)
         res = process_df(df, start_date_dt=start_date_dt)
         return res
 
-    # CPI
     china["CPI"] = check_and_store("china", "CPI", lambda: fetch_jin10_base(72, start_date_str), 
-                                   fallback_func=fetch_china_cpi_fallback, check_freshness=True)
-    # PPI
+                                   fallback_funcs=[fetch_china_cpi_fallback], check_freshness=True)
     china["PPI"] = check_and_store("china", "PPI", lambda: fetch_jin10_base(60, start_date_str),
-                                   fallback_func=fetch_china_ppi_fallback, check_freshness=True)
-    # PMI
+                                   fallback_funcs=[fetch_china_ppi_fallback], check_freshness=True)
     china["PMI_制造业"] = check_and_store("china", "PMI_制造业", lambda: fetch_jin10_base(65, start_date_str),
-                                       fallback_func=fetch_china_pmi_fallback, check_freshness=True)
-    # LPR
+                                       fallback_funcs=[fetch_china_pmi_fallback], check_freshness=True)
+    
     res_lpr = get_manual_fallback("china", "LPR")
     if res_lpr:
         print("[中国LPR] 优先使用离线手动数据。")
@@ -544,10 +586,8 @@ def get_data_main():
         res_lpr = process_df(df_lpr, date_col="TRADE_DATE", start_date_dt=start_date_dt)
     china["LPR"] = res_lpr
 
-    # 货币供应量
     china["货币供应量"] = check_and_store("china", "货币供应量", fetch_china_money_supply_custom, check_freshness=True)
 
-    # 国债 (统一宽表格式 Key: 国债收益率)
     def fetch_bond_ak_wrapper():
         return ak.bond_china_yield(start_date=start_date_ak, end_date=end_date_ak)
     
@@ -555,11 +595,10 @@ def get_data_main():
     if res_bond:
         print("[中国国债] 优先使用离线手动数据。")
     else:
-        df_bond = call_with_retry(fetch_bond_ak_wrapper, "中国国债", fallback_func=fetch_china_bond_yield_fallback, check_freshness=True)
+        df_bond = call_with_retry(fetch_bond_ak_wrapper, "中国国债", fallback_funcs=[fetch_china_bond_yield_fallback], check_freshness=True)
         res_bond = process_df(df_bond, value_cols=['1年', '2年', '10年', '30年'], start_date_dt=start_date_dt)
     china["国债收益率"] = res_bond
 
-    # 南向资金
     res_south = get_manual_fallback("china", "南向资金净流入")
     if res_south:
         print("[南向资金] 优先使用离线手动数据。")
@@ -574,11 +613,17 @@ def get_data_main():
     print("\n--- 正在获取: 美国经济数据 ---")
     usa = data_store["usa"]
 
+    # 失业率：Jin10 -> AkShare -> Alpha Vantage
     usa["失业率"] = check_and_store("usa", "失业率", lambda: fetch_jin10_base(47, start_date_str), 
-                                  fallback_func=fetch_usa_unemployment_fallback, check_freshness=True)
+                                  fallback_funcs=[fetch_usa_unemployment_fallback_ak, fetch_usa_unemployment_fallback_av], check_freshness=True)
     
+    # CPI: Jin10 -> AkShare -> Alpha Vantage
     usa["CPI"] = check_and_store("usa", "CPI", lambda: fetch_jin10_base(9, start_date_str), 
-                                 fallback_func=fetch_usa_cpi_fallback, check_freshness=True)
+                                 fallback_funcs=[fetch_usa_cpi_fallback_ak, fetch_usa_cpi_fallback_av], check_freshness=True)
+
+    # 零售: Jin10 -> Alpha Vantage
+    usa["零售销售月率"] = check_and_store("usa", "零售销售月率", lambda: fetch_jin10_base(39, start_date_str), 
+                                       fallback_funcs=[fetch_usa_retail_fallback_av], check_freshness=True)
 
     # 美国国债 (统一宽表格式 Key: 国债收益率)
     res_bonds = get_manual_fallback("usa", "国债收益率")
@@ -589,11 +634,10 @@ def get_data_main():
         res_bonds = fetch_us_bond_yields_unified()
     usa["国债收益率"] = res_bonds
 
-    # Jin10 数据
+    # Jin10 数据 (暂无 Alpha Vantage 完美替代品，维持现状)
     usa["ISM_制造业PMI"] = check_and_store("usa", "ISM_制造业PMI", lambda: fetch_jin10_base(28, start_date_str), check_freshness=True)
     usa["ISM_非制造业PMI"] = check_and_store("usa", "ISM_非制造业PMI", lambda: fetch_jin10_base(29, start_date_str), check_freshness=True)
     usa["非农就业人数"] = check_and_store("usa", "非农就业人数", lambda: fetch_jin10_base(33, start_date_str), check_freshness=True)
-    usa["零售销售月率"] = check_and_store("usa", "零售销售月率", lambda: fetch_jin10_base(39, start_date_str), check_freshness=True)
     usa["利率决议"] = check_and_store("usa", "利率决议", lambda: fetch_jin10_base(24, start_date_str), check_freshness=True)
 
     # -------------------------------------------------------------------------
@@ -602,14 +646,12 @@ def get_data_main():
     print("\n--- 正在获取: 日本经济数据 ---")
     japan = data_store["japan"]
 
-    # 央行利率
     def fetch_japan_rate_safe():
         try: return ak.macro_japan_bank_rate()
         except: return fetch_jin10_base(22, start_date_str)
     
     japan["央行利率"] = check_and_store("japan", "央行利率", fetch_japan_rate_safe, check_freshness=True)
 
-    # 国债 (统一宽表格式 Key: 国债收益率)
     res_jp_bond = get_manual_fallback("japan", "国债收益率")
     if res_jp_bond:
         print("[日本国债] 优先使用离线手动数据。")
