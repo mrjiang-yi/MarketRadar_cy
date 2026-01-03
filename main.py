@@ -3,6 +3,7 @@ import os
 import sys
 import time
 import math
+import pandas as pd  # 新增: 用于数据处理
 from datetime import datetime
 
 # -----------------------------------------------------------------------------
@@ -16,6 +17,8 @@ if parent_dir not in sys.path:
 # 引入模块
 import fetch_data  # 负责 FX 和 国债
 import MarketRadar # 负责 K线 和 均线
+import utils       # 新增: 负责计算均线 (calculate_ma)
+
 try:
     import scrape_economy_selenium # 负责 CPI/PPI 等宏观指标 (Root Dir)
 except ImportError:
@@ -218,7 +221,7 @@ def main():
         ma_data_list = []
         all_status_logs.append({'name': 'kline_module', 'status': False, 'error': str(e)})
 
-    # 新增: 4. 抓取越南胡志明指数 (VNI) K线
+    # 新增: 4. 抓取越南胡志明指数 (VNI) K线 并计算均线
     print("\n[Step 4/4] 获取越南胡志明指数 (Investing.com)...")
     try:
         vni_data, vni_err = fetch_data.fetch_vietnam_index_klines()
@@ -229,10 +232,31 @@ def main():
                 kline_data_dict["data"] = {}
                 
             kline_data_dict["data"]["越南胡志明指数"] = vni_data
-            all_status_logs.append({'name': '越南胡志明指数K线', 'status': True, 'error': None})
-            print(f"✅ 越南胡志明指数获取成功 ({len(vni_data)} 条记录)")
+            
+            # --- 计算越南指数均线 ---
+            try:
+                # 转换为 DataFrame 格式适配 utils.calculate_ma
+                df_vni = pd.DataFrame(vni_data)
+                df_vni['name'] = "越南胡志明指数" # 必须添加 name 列
+                
+                # 计算均线
+                vni_ma_list = utils.calculate_ma(df_vni)
+                if vni_ma_list:
+                    ma_data_list.extend(vni_ma_list)
+                    print(f"✅ 越南胡志明指数获取成功 ({len(vni_data)} 条记录) & 均线已计算")
+                else:
+                    print(f"✅ 越南胡志明指数获取成功 ({len(vni_data)} 条记录) (均线计算无结果)")
+                
+                all_status_logs.append({'name': '越南胡志明指数', 'status': True, 'error': None})
+                
+            except Exception as e_ma:
+                print(f"⚠️ 越南数据获取成功但均线计算失败: {e_ma}")
+                # 仍然标记为成功，因为核心数据已获取
+                all_status_logs.append({'name': '越南胡志明指数', 'status': True, 'error': f"MA Error: {e_ma}"})
+            # -----------------------
+            
         else:
-            all_status_logs.append({'name': '越南胡志明指数K线', 'status': False, 'error': vni_err})
+            all_status_logs.append({'name': '越南胡志明指数', 'status': False, 'error': vni_err})
             print(f"❌ 越南胡志明指数获取失败: {vni_err}")
     except Exception as e:
         print(f"❌ 越南指数模块异常: {e}")

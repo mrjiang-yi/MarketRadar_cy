@@ -209,10 +209,10 @@ class MarketFetcher:
         return df[['date', 'name', 'open', 'close', 'high', 'low', 'volume']]
 
     def fetch_akshare(self, symbol, asset_type):
-        """尝试从 AkShare 获取 K线 (带3次重试)"""
+        """尝试从 AkShare 获取 K线 (带5次重试)"""
         if not symbol: return pd.DataFrame()
         
-        max_retries = 3
+        max_retries = 5
         
         for i in range(max_retries):
             retry_msg = f" [重试{i}]" if i > 0 else ""
@@ -258,10 +258,10 @@ class MarketFetcher:
         return pd.DataFrame()
 
     def fetch_yfinance(self, symbol):
-        """尝试从 Yahoo Finance 获取 K线 (带3次重试)"""
+        """尝试从 Yahoo Finance 获取 K线 (带5次重试)"""
         if not symbol: return pd.DataFrame()
         
-        max_retries = 3
+        max_retries = 5
         
         for i in range(max_retries):
             retry_msg = f" [重试{i}]" if i > 0 else ""

@@ -26,7 +26,7 @@ warnings.filterwarnings("ignore")
 
 ALPHA_VANTAGE_KEY = os.environ.get("ALPHA_VANTAGE_KEY", "DEMO")
 
-def get_retry_session(retries=3):
+def get_retry_session(retries=5):
     session = requests.Session()
     # 模拟浏览器 Header，防止 Investing.com 403
     session.headers.update({

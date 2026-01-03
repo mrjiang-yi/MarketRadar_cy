@@ -4,7 +4,7 @@
 # 功能描述:
 # 1. 使用 Selenium (Headless Chrome) 并发抓取东方财富网的多项宏观经济数据。
 # 2. [对外接口] 提供 get_macro_data() 供 MarketRadar 主程序调用。
-# 3. [稳定性] 增加重试机制：单个任务失败时自动重试3次。
+# 3. [稳定性] 增加重试机制：单个任务失败时自动重试5次。
 # 4. [定制逻辑] 针对“中国_南向资金”仅获取近30天数据；其他数据保持近180天。
 # 5. [修复] 增加页面加载超时限制(45s)和降低并发数(2)。
 # 6. [修复] 修复南向资金 .dt 报错。
@@ -89,7 +89,7 @@ class MacroDataScraper:
             return pd.NaT
 
     def fetch_single_source(self, name, url):
-        max_retries = 3
+        max_retries = 5
         # 南向资金仅需30天，其他数据保持180天
         days_to_keep = 30 if "南向资金" in name else 180
         last_error = None
