@@ -87,6 +87,7 @@ def merge_final_report(macro_data_combined, kline_data_dict, ma_data_list):
         "china": macro_data_combined.get("china", {}),
         "usa": macro_data_combined.get("usa", {}),
         "japan": macro_data_combined.get("japan", {}),
+        "hk": macro_data_combined.get("hk", {}), # [修复] 显式包含香港数据(Selenium抓取的指数)
         # K线数据部分
         "market_klines": kline_data_dict.get("data", {})
     }
@@ -226,6 +227,61 @@ def main():
         kline_data_dict = {"meta": {}, "data": {}}
         ma_data_list = []
         all_status_logs.append({'name': 'kline_module', 'status': False, 'error': str(e)})
+
+    # [Step 3.5 - 修复回补] 检查恒生医疗保健指数是否缺失，如缺失则尝试从 Selenium 数据中回补
+    # 原因：MarketRadar.py 的 API 可能失败，但 scrape_economy_selenium 已成功抓取
+    hshci_key = "恒生医疗保健指数"
+    if "data" not in kline_data_dict:
+        kline_data_dict["data"] = {}
+        
+    if hshci_key not in kline_data_dict["data"]:
+        # 尝试从 combined_macro 中的 'hk' 字段查找
+        # scrape_economy_selenium 将其存放于: result['hk']['恒生医疗保健指数']
+        hk_data = combined_macro.get("hk", {})
+        if hshci_key in hk_data and hk_data[hshci_key]:
+            print(f"\n[Step 3.5] ⚡ 检测到 {hshci_key} K线缺失，正在从 Selenium 数据回补...")
+            try:
+                raw_data = hk_data[hshci_key]
+                df_hshci = pd.DataFrame(raw_data)
+                
+                # 数据适配：Selenium 输出列名 ('日期', 'close', 'volume') -> Utils 需求 ('date', 'close', 'name')
+                if '日期' in df_hshci.columns:
+                    df_hshci.rename(columns={'日期': 'date'}, inplace=True)
+                
+                df_hshci['name'] = hshci_key
+                
+                # 确保数值类型正确
+                for col in ['close', 'open', 'high', 'low', 'volume']:
+                    if col in df_hshci.columns:
+                        df_hshci[col] = pd.to_numeric(df_hshci[col], errors='coerce')
+
+                # 必须包含 date 且格式正确
+                if 'date' in df_hshci.columns:
+                    df_hshci['date'] = pd.to_datetime(df_hshci['date'])
+                    
+                    # 1. 计算均线
+                    hshci_ma_list = utils.calculate_ma(df_hshci)
+                    if hshci_ma_list:
+                        ma_data_list.extend(hshci_ma_list)
+                        print(f"✅ {hshci_key} 回补成功: 均线已计算")
+                    else:
+                        print(f"⚠️ {hshci_key} 回补警告: 均线计算无结果 (可能数据不足)")
+                    
+                    # 2. 存入 K线字典 (格式化日期为字符串)
+                    df_hshci['date'] = df_hshci['date'].dt.strftime('%Y-%m-%d')
+                    # 清洗 NaN
+                    df_hshci = df_hshci.where(pd.notnull(df_hshci), None)
+                    kline_data_dict["data"][hshci_key] = df_hshci.to_dict(orient='records')
+                    
+                    # 记录回补成功日志
+                    all_status_logs.append({'name': f"{hshci_key}(Recovered)", 'status': True, 'error': None})
+                else:
+                    print(f"❌ {hshci_key} 回补失败: 缺少 'date'/'日期' 列")
+            except Exception as e_backfill:
+                print(f"❌ {hshci_key} 回补过程异常: {e_backfill}")
+        else:
+            # 如果连 Selenium 也没抓到，那就没办法了
+            pass
 
     # 新增: 4. 抓取越南胡志明指数 (VNI) K线 并计算均线
     print("\n[Step 4/4] 获取越南胡志明指数 (Investing.com)...")
