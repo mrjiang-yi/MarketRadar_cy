@@ -2,13 +2,12 @@
 # -----------------------------------------------------------------------------
 # DeepSeek Finance Project - Macro Data Scraper (Concurrent Version)
 # 功能描述:
-# 1. 使用 Selenium (Headless Chrome) 并发抓取东方财富网的多项宏观经济数据。
+# 1. 使用 Selenium (Headless Chrome) 并发抓取东方财富网及 Investing.com 的数据。
 # 2. [对外接口] 提供 get_macro_data() 供 MarketRadar 主程序调用。
 # 3. [稳定性] 增加重试机制：单个任务失败时自动重试5次。
 # 4. [定制逻辑] 针对“中国_南向资金”仅获取近30天数据；其他数据保持近180天。
-# 5. [修复] 增加页面加载超时限制(45s)和降低并发数(2)。
-# 6. [修复] 修复南向资金 .dt 报错。
-# 7. [新增] 返回详细状态日志供主程序生成 Log 文件。
+# 5. [新增] 支持 Investing.com 数据格式清洗（处理 K/M 交易量单位及中文日期）。
+# 6. [反爬] 增加防检测参数以应对 Investing.com。
 # -----------------------------------------------------------------------------
 
 import time
@@ -16,6 +15,7 @@ import json
 import pandas as pd
 import datetime
 import os
+import re
 import numpy as np
 from io import StringIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -42,6 +42,8 @@ class MacroDataScraper:
             "美国_核心零售销售月率": "https://data.eastmoney.com/cjsj/foreign_0_9.html",
             "美国_利率决议": "https://data.eastmoney.com/cjsj/foreign_8_0.html",
             "日本_央行利率决议": "https://data.eastmoney.com/cjsj/foreign_3_0.html",
+            # [新增] Investing.com 恒生医疗保健指数
+            "恒生医疗保健指数": "https://cn.investing.com/indices/hang-seng-healthcare-historical-data"
         }
 
         # 输出结构映射表
@@ -57,7 +59,8 @@ class MacroDataScraper:
             "美国_非农就业": ("usa", "非农就业人数"),
             "美国_核心零售销售月率": ("usa", "零售销售月率"),
             "美国_利率决议": ("usa", "利率决议"),
-            "日本_央行利率决议": ("japan", "央行利率")
+            "日本_央行利率决议": ("japan", "央行利率"),
+            "恒生医疗保健指数": ("hk", "恒生医疗保健指数")
         }
         
         # 结果存储字典
@@ -71,22 +74,66 @@ class MacroDataScraper:
         self.chrome_options.add_argument("--log-level=3")
         self.chrome_options.add_argument("--no-sandbox")
         self.chrome_options.add_argument("--disable-dev-shm-usage")
+        self.chrome_options.add_argument("--disable-blink-features=AutomationControlled") # [新增] 防止被识别为自动化
         self.chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36')
         
         # 独立运行时输出文件路径
         self.output_path = "OnlineReport.json"
 
     def clean_date(self, date_str):
+        """
+        清洗日期格式，支持 '2026年01月02日' 和 '2023年5月份' 等格式
+        """
         try:
             date_str = str(date_str).strip()
-            if "年" in date_str and "月" in date_str:
-                clean_str = date_str.replace("月份", "").replace("月", "").replace("年", "-")
+            # 移除 '日', '月份', '月'，将 '年' 替换为 '-'
+            if "年" in date_str:
+                clean_str = date_str.replace("月份", "").replace("月", "").replace("日", "").replace("年", "-")
+                # 处理类似 "2023-5" 这种只有年月的情况，补全为1号
                 if clean_str.count("-") == 1:
                     clean_str += "-01"
                 return pd.to_datetime(clean_str)
             return pd.to_datetime(date_str)
         except Exception:
             return pd.NaT
+
+    def parse_volume(self, vol_str):
+        """
+        解析带单位的交易量 (e.g., '4.00K', '618.89M')
+        """
+        if not isinstance(vol_str, str):
+            return vol_str
+        
+        vol_str = vol_str.upper().strip()
+        if vol_str == '-' or vol_str == '':
+            return 0.0
+            
+        multiplier = 1.0
+        if 'K' in vol_str:
+            multiplier = 1000.0
+            vol_str = vol_str.replace('K', '')
+        elif 'M' in vol_str:
+            multiplier = 1000000.0
+            vol_str = vol_str.replace('M', '')
+        elif 'B' in vol_str:
+            multiplier = 1000000000.0
+            vol_str = vol_str.replace('B', '')
+            
+        try:
+            return float(vol_str) * multiplier
+        except:
+            return 0.0
+
+    def parse_percentage(self, pct_str):
+        """
+        解析百分比字符串
+        """
+        if not isinstance(pct_str, str):
+            return pct_str
+        try:
+            return float(pct_str.replace('%', '').replace(',', ''))
+        except:
+            return 0.0
 
     def fetch_single_source(self, name, url):
         max_retries = 5
@@ -107,15 +154,46 @@ class MacroDataScraper:
                 driver.get(url)
                 # 等待表格加载
                 WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.TAG_NAME, "table")))
+                
+                # 获取页面源码解析
                 html = driver.page_source
                 dfs = pd.read_html(StringIO(html))
                 
                 if not dfs:
                     raise ValueError("页面解析为空，未找到表格数据")
 
-                df = max(dfs, key=lambda x: len(x))
+                # [逻辑优化] 根据列名特征选择正确的表格，而不是盲目选最大的
+                target_df = None
                 
-                # 处理 MultiIndex
+                # Investing.com 特征列
+                investing_cols = ['日期', '收盘', '交易量']
+                # 东方财富 特征列
+                eastmoney_cols = ['月份', '时间', '发布日期']
+                
+                for df in dfs:
+                    # 清洗列名
+                    df.columns = [str(c).replace(" ", "").replace("\n", "").strip() for c in df.columns]
+                    col_str = "".join(df.columns)
+                    
+                    if name == "恒生医疗保健指数":
+                        # 检查是否包含关键列
+                        if all(k in df.columns for k in ['日期', '收盘', '交易量']):
+                            target_df = df
+                            break
+                    else:
+                        # 默认逻辑：找最大的，或者匹配日期的
+                        possible_date_cols = ['月份', '时间', '日期', '发布日期', '公布日期']
+                        if any(x in str(col) for x in df.columns for col in possible_date_cols):
+                            if target_df is None or len(df) > len(target_df):
+                                target_df = df
+                
+                if target_df is None:
+                    # 回退到旧逻辑：选行数最多的
+                    target_df = max(dfs, key=lambda x: len(x))
+
+                df = target_df
+                
+                # 处理 MultiIndex (东方财富常见)
                 if isinstance(df.columns, pd.MultiIndex):
                     new_cols = []
                     for col in df.columns:
@@ -134,7 +212,7 @@ class MacroDataScraper:
                     df['_std_date'] = df[date_col].apply(self.clean_date)
                     df = df.dropna(subset=['_std_date'])
                     
-                    # [修复] 强制转换为 datetime 类型
+                    # 强制转换为 datetime 类型
                     df['_std_date'] = pd.to_datetime(df['_std_date'])
                     
                     cutoff_date = pd.Timestamp.now() - pd.Timedelta(days=days_to_keep)
@@ -142,9 +220,50 @@ class MacroDataScraper:
                     
                     df['_std_date'] = df['_std_date'].dt.strftime('%Y-%m-%d')
                     df = df.replace({'-': None, 'nan': None})
-                    df = df.where(pd.notnull(df), None)
+                    
+                    # [定制] 恒生医疗保健指数 数据清洗
+                    if name == "恒生医疗保健指数":
+                        # 重命名列以匹配预期输出
+                        rename_map = {
+                            '日期': '日期',
+                            '收盘': 'close',
+                            '开盘': 'open',
+                            '高': 'high',
+                            '低': 'low',
+                            '交易量': 'volume',
+                            '涨跌幅': 'change_pct'
+                        }
+                        # 仅保留存在的列
+                        available_map = {k: v for k, v in rename_map.items() if k in df.columns}
+                        df = df.rename(columns=available_map)
+                        
+                        # 数值清洗
+                        if 'volume' in df.columns:
+                            df['volume'] = df['volume'].apply(self.parse_volume)
+                        
+                        # 价格清洗 (移除逗号)
+                        for col in ['close', 'open', 'high', 'low']:
+                            if col in df.columns:
+                                df[col] = df[col].astype(str).str.replace(',', '', regex=False)
+                                df[col] = pd.to_numeric(df[col], errors='coerce')
+                                
+                        # 涨跌幅清洗
+                        if 'change_pct' in df.columns:
+                            df['change_pct'] = df['change_pct'].apply(self.parse_percentage)
 
-                    if name == "中国_南向资金":
+                        # 构造最终 dict
+                        keep_cols = ['_std_date'] + list(available_map.values())
+                        # 确保不重复
+                        keep_cols = list(dict.fromkeys(keep_cols))
+                        # 过滤 df 中存在的列
+                        final_cols = [c for c in keep_cols if c in df.columns]
+                        df = df[final_cols]
+                        
+                        # 映射回统一的 '日期'
+                        df.rename(columns={'_std_date': '日期'}, inplace=True)
+
+                    elif name == "中国_南向资金":
+                        df = df.where(pd.notnull(df), None)
                         keep_cols = ['_std_date']
                         for c in df.columns:
                             if "净买额" in c and "当日" in c:
@@ -153,10 +272,11 @@ class MacroDataScraper:
                                 keep_cols.append(c)
                         df = df[keep_cols]
                         df.rename(columns={'_std_date': '日期'}, inplace=True)
-                    
-                    # 统一增加 '日期' 字段用于合并
-                    if '日期' not in df.columns and '_std_date' in df.columns:
-                        df['日期'] = df['_std_date']
+                    else:
+                        # 通用处理
+                        df = df.where(pd.notnull(df), None)
+                        if '日期' not in df.columns and '_std_date' in df.columns:
+                            df['日期'] = df['_std_date']
 
                     records = df.to_dict('records')
                     print(f"✅ [{name}] 抓取成功! 获得 {len(records)} 条记录")
@@ -207,7 +327,8 @@ class MacroDataScraper:
         nested_data = {
             "china": {},
             "usa": {},
-            "japan": {}
+            "japan": {},
+            "hk": {} # 新增香港区域
         }
         
         for old_key, data_list in self.results.items():
@@ -215,6 +336,8 @@ class MacroDataScraper:
                 continue
             if old_key in self.key_mapping:
                 country_key, metric_key = self.key_mapping[old_key]
+                if country_key not in nested_data:
+                    nested_data[country_key] = {}
                 nested_data[country_key][metric_key] = data_list
         
         return nested_data
