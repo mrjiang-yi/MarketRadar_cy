@@ -92,7 +92,7 @@ class MacroDataScraper:
 
     def clean_date(self, date_str):
         """
-        清洗日期格式，支持 '2026年01月02日' 和 '2023年5月份' 等格式
+        [原函数保留] 清洗日期格式，主要用于东方财富网数据
         """
         try:
             date_str = str(date_str).strip()
@@ -100,6 +100,28 @@ class MacroDataScraper:
             if "年" in date_str:
                 clean_str = date_str.replace("月份", "").replace("月", "").replace("日", "").replace("年", "-")
                 # 处理类似 "2023-5" 这种只有年月的情况，补全为1号
+                if clean_str.count("-") == 1:
+                    clean_str += "-01"
+                return pd.to_datetime(clean_str)
+            return pd.to_datetime(date_str)
+        except Exception:
+            return pd.NaT
+
+    def _clean_investing_date(self, date_str):
+        """
+        [新增专用函数] 专门用于清洗 Investing.com 的中文日期格式
+        支持: '2026年01月02日' -> '2026-01-02'
+        修复了原 clean_date 可能会错误删除‘月’字导致格式错误的问题
+        """
+        try:
+            date_str = str(date_str).strip()
+            if "年" in date_str:
+                # 关键修复: 将 '月' 替换为 '-' 而不是空字符串
+                clean_str = date_str.replace("年", "-").replace("月份", "").replace("月", "-").replace("日", "")
+                
+                # 处理可能出现的多余横杠
+                clean_str = re.sub(r'-+', '-', clean_str)
+                
                 if clean_str.count("-") == 1:
                     clean_str += "-01"
                 return pd.to_datetime(clean_str)
@@ -115,7 +137,7 @@ class MacroDataScraper:
             return vol_str
         
         vol_str = vol_str.upper().strip()
-        if vol_str == '-' or vol_str == '':
+        if vol_str in ['-', '', 'NAN', 'NONE']:
             return 0.0
             
         multiplier = 1.0
@@ -145,7 +167,152 @@ class MacroDataScraper:
         except:
             return 0.0
 
+    def fetch_investing_source(self, name, url):
+        """
+        [新增独立函数] 专门抓取 Investing.com 数据
+        包含独立的超时设置、日期解析逻辑和表格定位逻辑，互不影响。
+        """
+        max_retries = 5
+        last_error = None
+        
+        # 恒生指数可能需要更长的时间来加载广告脚本（即使是 eager 模式）
+        # 这里使用独立的超时设置
+        
+        for attempt in range(1, max_retries + 1):
+            print(f"🌍 [{name}] 第 {attempt}/{max_retries} 次尝试 (Selenium - Investing专线)...")
+            driver = None
+            try:
+                driver = webdriver.Chrome(options=self.chrome_options)
+                
+                # 反爬虫处理
+                driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+                    "source": """Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"""
+                })
+
+                # [针对性调整] Investing.com 有时响应较慢，给予更宽容的超时时间 (60s)
+                driver.set_page_load_timeout(60)
+                driver.set_script_timeout(60)
+                
+                driver.get(url)
+                
+                # 等待表格加载
+                try:
+                    WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.TAG_NAME, "table")))
+                except:
+                    print(f"⚠️ [{name}] 等待表格超时，尝试继续解析源码...")
+                
+                html = driver.page_source
+                dfs = pd.read_html(StringIO(html))
+                
+                if not dfs:
+                    raise ValueError("页面解析为空，未找到表格数据")
+
+                # 定位 Investing 表格 (必须包含 日期/收盘/交易量)
+                target_df = None
+                for df in dfs:
+                    # 临时清洗列名以便匹配
+                    cols = [str(c).replace(" ", "").replace("\n", "").strip() for c in df.columns]
+                    if all(k in cols for k in ['日期', '收盘', '交易量']):
+                        df.columns = cols # 应用清洗后的列名
+                        target_df = df
+                        break
+                
+                if target_df is None:
+                    # 备选方案：按列特征匹配
+                    for df in dfs:
+                        cols = [str(c).replace(" ", "").replace("\n", "").strip() for c in df.columns]
+                        if '日期' in cols and '收盘' in cols:
+                            df.columns = cols
+                            target_df = df
+                            break
+
+                if target_df is None:
+                     raise ValueError(f"未找到符合 Investing 格式的表格 (检查列名: 日期/收盘/交易量)")
+
+                df = target_df.copy()
+                
+                # 使用专用日期清洗函数
+                df['_std_date'] = df['日期'].apply(self._clean_investing_date)
+                
+                # 检查是否解析失败
+                if df['_std_date'].isna().all() and not df.empty:
+                    print(f"❌ [{name}] 日期解析全部失败! 原始数据示例: {df['日期'].iloc[0]}")
+                
+                df = df.dropna(subset=['_std_date'])
+                df['_std_date'] = pd.to_datetime(df['_std_date'])
+                
+                # 过滤日期 (保留180天，虽然南向资金是30天，但恒生指数建议保留多一点以计算均线)
+                cutoff_date = pd.Timestamp.now() - pd.Timedelta(days=180)
+                df = df[df['_std_date'] >= cutoff_date]
+                
+                df['_std_date'] = df['_std_date'].dt.strftime('%Y-%m-%d')
+                
+                # 重命名映射
+                rename_map = {
+                    '日期': '日期', 
+                    '收盘': 'close', 
+                    '开盘': 'open',
+                    '高': 'high', 
+                    '低': 'low', 
+                    '交易量': 'volume', 
+                    '涨跌幅': 'change_pct'
+                }
+                
+                # 数据清洗
+                if 'volume' in df.columns:
+                     # Investing 的 volume 列在映射前是 '交易量'
+                     pass 
+                
+                # 先重命名
+                available_map = {k: v for k, v in rename_map.items() if k in df.columns}
+                df = df.rename(columns=available_map)
+                
+                # 数值处理
+                if 'volume' in df.columns:
+                    df['volume'] = df['volume'].apply(self.parse_volume)
+                
+                for col in ['close', 'open', 'high', 'low']:
+                    if col in df.columns:
+                        df[col] = df[col].astype(str).str.replace(',', '', regex=False)
+                        df[col] = pd.to_numeric(df[col], errors='coerce')
+                        
+                if 'change_pct' in df.columns:
+                    df['change_pct'] = df['change_pct'].apply(self.parse_percentage)
+
+                # 构造最终列
+                keep_cols = ['_std_date'] + list(available_map.values())
+                keep_cols = list(dict.fromkeys(keep_cols)) # 去重
+                final_cols = [c for c in keep_cols if c in df.columns]
+                
+                df = df[final_cols]
+                df.rename(columns={'_std_date': '日期'}, inplace=True)
+                
+                records = df.to_dict('records')
+                print(f"✅ [{name}] 抓取成功! 获得 {len(records)} 条记录")
+                return name, records, None 
+
+            except Exception as e:
+                last_error = str(e)
+                print(f"❌ [{name}] 失败: {str(e)[:100]}")
+                if attempt < max_retries:
+                    time.sleep(2)
+            finally:
+                if driver:
+                    try:
+                        driver.quit()
+                    except:
+                        pass
+        
+        return name, [], last_error
+
     def fetch_single_source(self, name, url):
+        """
+        通用抓取入口
+        """
+        # [分流逻辑] 如果是恒生医疗保健指数，转交专用函数处理
+        if name == "恒生医疗保健指数":
+            return self.fetch_investing_source(name, url)
+
         max_retries = 5
         # 南向资金仅需30天，其他数据保持180天
         days_to_keep = 30 if "南向资金" in name else 180
@@ -173,7 +340,6 @@ class MacroDataScraper:
                 driver.get(url)
                 
                 # 等待表格加载 (关键)
-                # Investing.com 可能需要一点时间渲染表格
                 try:
                     WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "table")))
                 except Exception:
@@ -194,17 +360,11 @@ class MacroDataScraper:
                     # 清洗列名
                     df.columns = [str(c).replace(" ", "").replace("\n", "").strip() for c in df.columns]
                     
-                    if name == "恒生医疗保健指数":
-                        # 检查是否包含关键列
-                        if all(k in df.columns for k in ['日期', '收盘', '交易量']):
+                    # 默认逻辑：找最大的，或者匹配日期的
+                    possible_date_cols = ['月份', '时间', '日期', '发布日期', '公布日期']
+                    if any(x in str(col) for x in df.columns for col in possible_date_cols):
+                        if target_df is None or len(df) > len(target_df):
                             target_df = df
-                            break
-                    else:
-                        # 默认逻辑：找最大的，或者匹配日期的
-                        possible_date_cols = ['月份', '时间', '日期', '发布日期', '公布日期']
-                        if any(x in str(col) for x in df.columns for col in possible_date_cols):
-                            if target_df is None or len(df) > len(target_df):
-                                target_df = df
                 
                 if target_df is None:
                     # 回退到旧逻辑：选行数最多的
@@ -228,6 +388,7 @@ class MacroDataScraper:
                 date_col = next((col for col in df.columns if any(x in str(col) for x in possible_date_cols)), None)
                 
                 if date_col:
+                    # 这里依然使用原有的 clean_date 以保持对东财数据的兼容性
                     df['_std_date'] = df[date_col].apply(self.clean_date)
                     df = df.dropna(subset=['_std_date'])
                     
@@ -240,45 +401,7 @@ class MacroDataScraper:
                     df['_std_date'] = df['_std_date'].dt.strftime('%Y-%m-%d')
                     df = df.replace({'-': None, 'nan': None})
                     
-                    # [定制] 恒生医疗保健指数 数据清洗
-                    if name == "恒生医疗保健指数":
-                        # 重命名列以匹配预期输出
-                        rename_map = {
-                            '日期': '日期',
-                            '收盘': 'close',
-                            '开盘': 'open',
-                            '高': 'high',
-                            '低': 'low',
-                            '交易量': 'volume',
-                            '涨跌幅': 'change_pct'
-                        }
-                        # 仅保留存在的列
-                        available_map = {k: v for k, v in rename_map.items() if k in df.columns}
-                        df = df.rename(columns=available_map)
-                        
-                        # 数值清洗
-                        if 'volume' in df.columns:
-                            df['volume'] = df['volume'].apply(self.parse_volume)
-                        
-                        # 价格清洗 (移除逗号)
-                        for col in ['close', 'open', 'high', 'low']:
-                            if col in df.columns:
-                                df[col] = df[col].astype(str).str.replace(',', '', regex=False)
-                                df[col] = pd.to_numeric(df[col], errors='coerce')
-                                
-                        # 涨跌幅清洗
-                        if 'change_pct' in df.columns:
-                            df['change_pct'] = df['change_pct'].apply(self.parse_percentage)
-
-                        # 构造最终 dict
-                        keep_cols = ['_std_date'] + list(available_map.values())
-                        keep_cols = list(dict.fromkeys(keep_cols))
-                        final_cols = [c for c in keep_cols if c in df.columns]
-                        df = df[final_cols]
-                        
-                        df.rename(columns={'_std_date': '日期'}, inplace=True)
-
-                    elif name == "中国_南向资金":
+                    if name == "中国_南向资金":
                         df = df.where(pd.notnull(df), None)
                         keep_cols = ['_std_date']
                         for c in df.columns:
