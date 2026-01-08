@@ -84,7 +84,10 @@ TARGETS_GLOBAL = {
     "铜(COMEX)":    {"ak": "HG",      "yf": "HG=F",     "type": "future_foreign"}, 
     # [配置] 上海金改用期货主力合约 (au0)
     "上海金":       {"ak": "au0",     "yf": None,       "type": "future_zh_sina"}, 
-    "VNM(ETF)":    {"ak": "VNM",      "yf": "VNM",      "type": "stock_us"},     
+    "VNM(ETF)":     {"ak": "VNM",     "yf": "VNM",      "type": "stock_us"},
+    # [新增] 原油和铀
+    "原油(WTI)":    {"ak": "CL",      "yf": "CL=F",     "type": "future_foreign"},
+    "铀(URA)":      {"ak": "URA",     "yf": "URA",      "type": "stock_us"},
 }
 
 # ------------------------------------------------
@@ -220,16 +223,18 @@ class MarketFetcher:
         if 'date' not in df.columns and '日期' in df.columns:
             df.rename(columns={'日期': 'date'}, inplace=True)
         
-        # 处理 AkShare 中文列名映射
+        # 处理 AkShare 中文列名映射 (新增：成交额、量比)
         rename_map = {
-            '开盘': 'open', '收盘': 'close', '最高': 'high', '最低': 'low', '成交量': 'volume', '交易量': 'volume', '持仓量': 'open_interest',
+            '开盘': 'open', '收盘': 'close', '最高': 'high', '最低': 'low', 
+            '成交量': 'volume', '交易量': 'volume', '持仓量': 'open_interest',
+            '成交额': 'amount', '量比': 'volume_ratio',
             '开盘价': 'open', '收盘价': 'close', '最高价': 'high', '最低价': 'low', 
             'date': 'date' 
         }
         df.rename(columns=rename_map, inplace=True)
         
         # 确保包含必要列
-        required_cols = ['date', 'name', 'open', 'close', 'high', 'low', 'volume']
+        required_cols = ['date', 'name', 'open', 'close', 'high', 'low', 'volume', 'amount', 'volume_ratio']
         
         # 确保日期格式为 datetime
         df['date'] = pd.to_datetime(df['date'])
@@ -239,19 +244,22 @@ class MarketFetcher:
             if col not in df.columns:
                 if col == 'name':
                      df['name'] = name
+                elif col in ['amount', 'volume_ratio']:
+                     # 如果缺少成交额或量比，填充为 "-"
+                     df[col] = "-"
                 else:
                      df[col] = 0.0
                 
         if 'name' not in df.columns:
             df['name'] = name
         
-        # 处理可能的无效数值 (字符串转数字)
+        # 处理可能的无效数值 (字符串转数字，跳过 amount/volume_ratio 为 "-" 的情况)
         cols_to_numeric = ['open', 'close', 'high', 'low', 'volume']
         for col in cols_to_numeric:
             if col in df.columns and df[col].dtype == object:
                  df[col] = df[col].astype(str).str.replace(',', '').apply(pd.to_numeric, errors='coerce')
 
-        return df[['date', 'name', 'open', 'close', 'high', 'low', 'volume']]
+        return df[required_cols]
 
     def fetch_akshare(self, symbol, asset_type):
         """尝试从 AkShare 获取 K线 (带5次重试)"""

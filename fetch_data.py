@@ -44,19 +44,33 @@ def get_retry_session(retries=5):
 SESSION = get_retry_session()
 TIMEOUT = 15
 
-def fetch_latest_yf(ticker, name):
-    """yfinance 获取最新一天的数据"""
+def fetch_yf_data(ticker, name, days=1):
+    """
+    yfinance 获取数据
+    :param days: 获取最近几天的记录，默认1天
+    """
     try:
         t = yf.Ticker(ticker)
-        hist = t.history(period="5d")
+        # 如果需要多天数据，扩大获取范围以确保数量足够 (例如取1个月)
+        period = "1mo" if days > 1 else "5d"
+        hist = t.history(period=period)
+        
         if hist is None or hist.empty:
             return [], "No data returned from yfinance"
-        latest = hist.iloc[-1]
-        data = [{
-            "日期": latest.name.strftime('%Y-%m-%d'),
-            "最新值": float(latest['Close']),
-            "名称": name
-        }]
+        
+        # 取最后 N 天
+        latest_slice = hist.iloc[-days:]
+        
+        data = []
+        for dt, row in latest_slice.iterrows():
+            data.append({
+                "日期": dt.strftime('%Y-%m-%d'),
+                "最新值": float(row['Close']),
+                "名称": name
+            })
+            
+        # 结果按日期降序排列（最新的在最前）
+        data.sort(key=lambda x: x["日期"], reverse=True)
         return data, None
     except Exception as e:
         print(f"Error fetching {name} (yfinance): {e}")
@@ -89,7 +103,8 @@ def fetch_us_bond_yields():
     
     # 优先使用 YFinance
     for label, ticker in tickers_map.items():
-        data, err = fetch_latest_yf(ticker, label)
+        # 国债只需最新1天
+        data, err = fetch_yf_data(ticker, label, days=1)
         if data:
             item = data[0]
             if latest_date is None or item["日期"] > latest_date:
@@ -365,18 +380,24 @@ def get_market_fx_and_bonds():
     status_logs = []
 
     # 1. Market FX
-    tickers = {
-        "VIX恐慌指数": "^VIX",
-        "美元/人民币": "CNY=X",
-        "美元/日元": "JPY=X",
-        "美元/越南盾": "VND=X"
-    }
-    for name, ticker in tickers.items():
-        res, err = fetch_latest_yf(ticker, name)
+    # 定义配置：VIX获取近15天，其他获取最新1天
+    tickers_config = [
+        {"name": "VIX恐慌指数", "ticker": "^VIX", "days": 15},
+        {"name": "美元/人民币", "ticker": "CNY=X", "days": 1},
+        {"name": "美元/日元", "ticker": "JPY=X", "days": 1},
+        {"name": "美元/越南盾", "ticker": "VND=X", "days": 1}
+    ]
+
+    for item in tickers_config:
+        name = item["name"]
+        ticker = item["ticker"]
+        days = item["days"]
+        
+        res, err = fetch_yf_data(ticker, name, days=days)
         if res:
             data_store["market_fx"][name] = res
             status_logs.append({'name': name, 'status': True, 'error': None})
-            print(f"   [{name}] OK")
+            print(f"   [{name}] OK ({len(res)} records)")
         else:
             status_logs.append({'name': name, 'status': False, 'error': err})
             print(f"   [{name}] Failed")
