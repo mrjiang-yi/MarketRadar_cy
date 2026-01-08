@@ -11,6 +11,7 @@ import warnings
 import socket
 import time
 import random
+import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 
 # === 引入工具库 ===
@@ -213,17 +214,17 @@ class MarketFetcher:
         self.session = requests.Session()
     
     def normalize_df(self, df, name):
-        """统一清洗K线数据格式"""
+        """统一清洗K线数据格式并自动补全指标"""
         if df.empty: return df
         
-        # 统一列名
+        # 1. 统一列名 (Lower case)
         df.columns = [c.lower() for c in df.columns]
         
-        # 处理日期列
+        # 2. 处理日期列名
         if 'date' not in df.columns and '日期' in df.columns:
             df.rename(columns={'日期': 'date'}, inplace=True)
         
-        # 处理 AkShare 中文列名映射 (新增：成交额、量比)
+        # 3. 处理 AkShare 中文列名映射
         rename_map = {
             '开盘': 'open', '收盘': 'close', '最高': 'high', '最低': 'low', 
             '成交量': 'volume', '交易量': 'volume', '持仓量': 'open_interest',
@@ -233,33 +234,67 @@ class MarketFetcher:
         }
         df.rename(columns=rename_map, inplace=True)
         
-        # 确保包含必要列
-        required_cols = ['date', 'name', 'open', 'close', 'high', 'low', 'volume', 'amount', 'volume_ratio']
+        # 4. 确保日期格式并排序 (计算指标必须按时间顺序)
+        if 'date' in df.columns:
+            df['date'] = pd.to_datetime(df['date'])
+            df = df.sort_values(by='date', ascending=True)
         
-        # 确保日期格式为 datetime
-        df['date'] = pd.to_datetime(df['date'])
-        
-        # 填充缺失列
-        for col in required_cols:
+        # 5. 确保包含基础列 (不存在则先置为空)
+        for col in ['open', 'close', 'high', 'low', 'volume']:
             if col not in df.columns:
-                if col == 'name':
-                     df['name'] = name
-                elif col in ['amount', 'volume_ratio']:
-                     # 如果缺少成交额或量比，填充为 "-"
-                     df[col] = "-"
-                else:
-                     df[col] = 0.0
-                
+                df[col] = 0.0
+        
         if 'name' not in df.columns:
             df['name'] = name
-        
-        # 处理可能的无效数值 (字符串转数字，跳过 amount/volume_ratio 为 "-" 的情况)
-        cols_to_numeric = ['open', 'close', 'high', 'low', 'volume']
-        for col in cols_to_numeric:
-            if col in df.columns and df[col].dtype == object:
-                 df[col] = df[col].astype(str).str.replace(',', '').apply(pd.to_numeric, errors='coerce')
 
-        return df[required_cols]
+        # 6. 数值转换 (处理可能的字符串, 逗号等)
+        cols_to_numeric = ['open', 'close', 'high', 'low', 'volume', 'amount', 'volume_ratio']
+        for col in cols_to_numeric:
+            if col in df.columns:
+                if df[col].dtype == object:
+                     df[col] = df[col].astype(str).str.replace(',', '').apply(pd.to_numeric, errors='coerce')
+                else:
+                     df[col] = pd.to_numeric(df[col], errors='coerce')
+
+        # 7. 补全/计算 成交额 (Amount)
+        # 如果数据源没给 amount，就用 close * volume 近似
+        if 'amount' not in df.columns or df['amount'].isna().all():
+            df['amount'] = df['close'] * df['volume']
+        else:
+            df['amount'] = df['amount'].fillna(df['close'] * df['volume'])
+            
+        # 8. 补全/计算 量比 (Volume Ratio)
+        # 逻辑: 当日成交量 / 过去5日成交量均值(不含当日)
+        # 公式: Volume / Shift(Rolling(5).Mean())
+        need_calc_vr = False
+        if 'volume_ratio' not in df.columns:
+            need_calc_vr = True
+        elif df['volume_ratio'].isna().all():
+            need_calc_vr = True
+        
+        if need_calc_vr:
+            # 计算 5日均量 (shift(1)表示取前5天，不含今天)
+            ma5_vol = df['volume'].rolling(window=5, min_periods=1).mean().shift(1)
+            
+            # 计算比率 (处理除以0的情况)
+            # 使用 np.divide 安全除法，分母为0时填 NaN
+            # 然后 fillna(1.0) 或 0.0，这里通常量比为0或1比较合适，或者保留 NaN
+            # 这里简单处理：如果分母为0或NaN，量比设为0
+            df['volume_ratio'] = df['volume'] / ma5_vol
+            df['volume_ratio'] = df['volume_ratio'].replace([float('inf'), -float('inf')], 0.0).fillna(0.0)
+
+        # 9. 最终列筛选与填充
+        final_cols = ['date', 'name', 'open', 'close', 'high', 'low', 'volume', 'amount', 'volume_ratio']
+        
+        # 确保所有列都在 (例如计算后可能产生的 NaN)
+        for col in final_cols:
+            if col not in df.columns:
+                df[col] = 0.0
+        
+        # 填充残留 NaN (例如第一天没有前5日均值)
+        df.fillna(0, inplace=True)
+
+        return df[final_cols]
 
     def fetch_akshare(self, symbol, asset_type):
         """尝试从 AkShare 获取 K线 (带5次重试)"""
