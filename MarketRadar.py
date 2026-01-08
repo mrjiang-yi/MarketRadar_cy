@@ -134,7 +134,7 @@ TARGETS_VIETNAM_TOP10 = {
 }
 
 # ------------------------------------------------
-# 任务组 4: 美股七巨头
+# 任务组 4: 美股七巨头 + 扩充
 # ------------------------------------------------
 TARGETS_US_MAG7 = {
     "苹果(AAPL)":    {"ak": None, "yf": "AAPL",  "type": "stock_us"},
@@ -144,6 +144,10 @@ TARGETS_US_MAG7 = {
     "英伟达(NVDA)":  {"ak": None, "yf": "NVDA",  "type": "stock_us"},
     "Meta(META)":    {"ak": None, "yf": "META",  "type": "stock_us"},
     "特斯拉(TSLA)":  {"ak": None, "yf": "TSLA",  "type": "stock_us"},
+    # [新增]
+    "台积电(TSM)":   {"ak": None, "yf": "TSM",   "type": "stock_us"},
+    "博通(AVGO)":    {"ak": None, "yf": "AVGO",  "type": "stock_us"},
+    "美光(MU)":      {"ak": None, "yf": "MU",    "type": "stock_us"},
 }
 
 # ------------------------------------------------
@@ -293,6 +297,21 @@ class MarketFetcher:
         
         # 填充残留 NaN (例如第一天没有前5日均值)
         df.fillna(0, inplace=True)
+
+        # [新增/修改] 格式化特定列：如果值为 0 则输出 "-"
+        # 注意：这里会把 float 列变为 object 列，这在 to_dict('records') 导出 JSON 时是兼容的
+        cols_to_check = ['volume', 'amount', 'volume_ratio']
+        for col in cols_to_check:
+            def replace_zero(x):
+                try:
+                    # 判断浮点数 0
+                    if float(x) == 0:
+                        return "-"
+                except:
+                    pass
+                return x
+            
+            df[col] = df[col].apply(replace_zero)
 
         return df[final_cols]
 
@@ -625,9 +644,11 @@ def get_all_kline_data():
     all_ma_data.extend(ma_vn)
     all_status_logs.extend(logs_vn)
     
-    # 4. 抓取美股七巨头
-    data_us, ma_us, logs_us = fetch_group_data(fetcher, TARGETS_US_MAG7, "美股七巨头")
-    all_data_collection["data"]["美股七巨头"] = data_us
+    # 4. 抓取美股七巨头 + 扩充
+    # [修改] 组名变更为 "美股七巨头+台积电&博通&美光"
+    new_group_name = "美股七巨头+台积电&博通&美光"
+    data_us, ma_us, logs_us = fetch_group_data(fetcher, TARGETS_US_MAG7, new_group_name)
+    all_data_collection["data"][new_group_name] = data_us
     all_ma_data.extend(ma_us)
     all_status_logs.extend(logs_us)
     
