@@ -167,13 +167,16 @@ def generate_signals_summary(ma_data_dict):
     lines.append("-" * 30)
     
     for item in all_ma:
-        # [修改] 这里改为获取 "名称" (中文Key)，因为 utils.py 生成的是 "名称" 而不是 "name"
+        # [修改] 优先获取 "名称" (中文Key)
         name = item.get('名称', item.get('name', 'Unknown'))
         signals = item.get('Signals', [])
         
-        if signals:
+        # [修改] 过滤掉 "无特殊技术形态"，不在摘要中显示
+        active_signals = [s for s in signals if s != "无特殊技术形态"]
+        
+        if active_signals:
             signals_found = True
-            lines.append(f"🔴 [{name}]: {', '.join(signals)}")
+            lines.append(f"🔴 [{name}]: {', '.join(active_signals)}")
             
     if not signals_found:
         lines.append("今日无特殊技术信号。")
