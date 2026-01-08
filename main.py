@@ -167,7 +167,8 @@ def generate_signals_summary(ma_data_dict):
     lines.append("-" * 30)
     
     for item in all_ma:
-        name = item.get('name', 'Unknown')
+        # [修改] 这里改为获取 "名称" (中文Key)，因为 utils.py 生成的是 "名称" 而不是 "name"
+        name = item.get('名称', item.get('name', 'Unknown'))
         signals = item.get('Signals', [])
         
         if signals:

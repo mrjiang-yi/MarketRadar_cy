@@ -88,6 +88,10 @@ def calculate_tech_indicators(df):
         elif rsi6[-1] < 20:
             signals.append("RSI超卖")
 
+        # [修改] 如果没有特殊形态，显式写入说明，不要空着
+        if not signals:
+            signals.append("无特殊技术形态")
+
         return {
             "MACD": round(float(macd_bar[-1]), 4),
             "DIF": round(float(dif[-1]), 4),
