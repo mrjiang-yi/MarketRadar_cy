@@ -28,7 +28,9 @@ class MacroDataScraper:
             "Fed_Rate_Monitor": "https://www.investing.com/central-banks/fed-rate-monitor",
             "CCFI_运价指数": "https://www.sse.net.cn/index/singleIndex?indexType=ccfi",
             "BDI_波罗的海指数": "https://www.investing.com/indices/baltic-dry-historical-data",
-            "USA_Initial_Jobless": "https://www.investing.com/economic-calendar/initial-jobless-claims-294"
+            "USA_Initial_Jobless": "https://www.investing.com/economic-calendar/initial-jobless-claims-294",
+            "CBOE_SKEW": "https://www.investing.com/indices/cboe-skew-historical-data",
+            "ICE_BofA_HighYield": "https://www.investing.com/indices/ice-bofa-us-high-yield-historical-data"
         }
 
         self.key_mapping = {
@@ -49,7 +51,9 @@ class MacroDataScraper:
             "Fed_Rate_Monitor": ("usa", "Fed_Rate_Monitor"),
             "CCFI_运价指数": ("china", "CCFI_运价指数"),
             "BDI_波罗的海指数": ("market_fx", "BDI_波罗的海指数"),
-            "USA_Initial_Jobless": ("usa", "Initial_Jobless_Claims")
+            "USA_Initial_Jobless": ("usa", "Initial_Jobless_Claims"),
+            "CBOE_SKEW": ("market_fx", "CBOE_SKEW"),
+            "ICE_BofA_HighYield": ("market_fx", "ICE_BofA_HighYield")
         }
         
         self.results = {}
@@ -77,8 +81,8 @@ class MacroDataScraper:
         if name == "恒生医疗保健指数":
             return selenium_scrapers.fetch_investing_source(name, url, self.chrome_options)
         
-        if name == "BDI_波罗的海指数":
-            # BDI 需要近 10 天的数据
+        # Investing.com 近 10 天数据组
+        if name in ["BDI_波罗的海指数", "CBOE_SKEW", "ICE_BofA_HighYield"]:
             return selenium_scrapers.fetch_investing_source(name, url, self.chrome_options, days_to_keep=10)
 
         # 2. Investing.com 财经日历数据

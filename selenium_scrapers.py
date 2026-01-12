@@ -270,8 +270,8 @@ def fetch_fed_rate_monitor(name, url, chrome_options):
 
 def fetch_ccfi_data(name, url, chrome_options):
     """
-    [新增] 抓取中国出口集装箱运价指数 (CCFI)
-    全数据抓取：包含表头日期和所有航线数据
+    抓取中国出口集装箱运价指数 (CCFI)
+    [修复] 宽松表头匹配逻辑，处理复杂嵌套表头和换行
     """
     max_retries = 3
     last_error = None
@@ -287,7 +287,6 @@ def fetch_ccfi_data(name, url, chrome_options):
             driver.set_page_load_timeout(45)
             driver.get(url)
             
-            # 等待表格加载
             try:
                 WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.TAG_NAME, "table")))
             except:
@@ -299,57 +298,64 @@ def fetch_ccfi_data(name, url, chrome_options):
             if not dfs:
                 raise ValueError("未找到表格数据")
             
-            # 查找包含 "航线" 的表格
+            # 查找目标表格 (宽松匹配 "航线" 关键字)
             target_df = None
             for df in dfs:
-                # 展平列名 (MultiIndex 处理)
-                cols = []
+                # 尝试将所有列名合并为字符串进行检查
+                header_str = ""
                 if isinstance(df.columns, pd.MultiIndex):
-                    for col in df.columns:
-                        cols.append(" ".join([str(c) for c in col]).strip())
+                    header_str = " ".join([str(c) for col in df.columns for c in col])
                 else:
-                    cols = [str(c).strip() for c in df.columns]
+                    header_str = " ".join([str(c) for c in df.columns])
                 
-                # 检查关键词
-                if any("航线" in c for c in cols) and any("涨跌" in c for c in cols):
-                    df.columns = cols
+                if "航线" in header_str:
                     target_df = df
                     break
             
             if target_df is None:
-                raise ValueError("未找到 CCFI 运价指数表格")
+                raise ValueError("未找到包含 '航线' 的表格")
 
             # 提取表头中的日期
-            # 表头通常类似: "上期 2025-12-26", "本期 2026-01-09"
+            # 表头示例: "上期 2025-12-26", "本期 2026-01-09"
             prev_date = None
             curr_date = None
             
-            for col in target_df.columns:
-                if "上期" in col:
-                    match = re.search(r"(\d{4}-\d{2}-\d{2})", col)
+            # 展平列名以便搜索日期
+            flat_cols = []
+            if isinstance(target_df.columns, pd.MultiIndex):
+                for col in target_df.columns:
+                    flat_cols.append(" ".join([str(c) for c in col]))
+            else:
+                flat_cols = [str(c) for c in target_df.columns]
+
+            for col_str in flat_cols:
+                if "上期" in col_str:
+                    match = re.search(r"(\d{4}-\d{2}-\d{2})", col_str)
                     if match: prev_date = match.group(1)
-                if "本期" in col:
-                    match = re.search(r"(\d{4}-\d{2}-\d{2})", col)
+                if "本期" in col_str:
+                    match = re.search(r"(\d{4}-\d{2}-\d{2})", col_str)
                     if match: curr_date = match.group(1)
             
-            # 如果没抓到日期，使用当天
             if not curr_date:
                 curr_date = pd.Timestamp.now().strftime('%Y-%m-%d')
 
             records = []
-            # 遍历每一行
-            # 期望列: 航线, 上期值, 本期值, 涨跌幅
-            # 由于列名可能复杂，我们按位置取 (假设结构固定: Col 0=航线, Col 1=上期, Col 2=本期, Col 3=涨跌)
-            # 过滤掉非数据行
-            
+            # 假设数据结构相对固定: Col 0=航线, Col 1=上期, Col 2=本期, Col 3=涨跌
             for _, row in target_df.iterrows():
-                route_name = str(row.iloc[0]).strip()
-                if "航线" in route_name: continue # 跳过标题行重复
-                
                 try:
-                    prev_val = float(str(row.iloc[1]).replace(',', ''))
-                    curr_val = float(str(row.iloc[2]).replace(',', ''))
-                    change_pct = float(str(row.iloc[3]).replace('%', '').replace(',', ''))
+                    route_name = str(row.iloc[0]).strip()
+                    # 跳过标题行或无效行
+                    if "航线" in route_name or route_name == "nan": continue
+                    
+                    # 简单清洗数据 (去除逗号)
+                    def clean_val(x):
+                        return float(str(x).replace(',', '').replace('nan', '0'))
+
+                    prev_val = clean_val(row.iloc[1])
+                    curr_val = clean_val(row.iloc[2])
+                    
+                    change_str = str(row.iloc[3]).replace('%', '').replace(',', '')
+                    change_pct = float(change_str) if change_str != 'nan' else 0.0
                     
                     records.append({
                         "日期": curr_date,
@@ -360,7 +366,10 @@ def fetch_ccfi_data(name, url, chrome_options):
                         "涨跌幅(%)": change_pct
                     })
                 except:
-                    continue # 解析失败跳过该行
+                    continue 
+
+            if not records:
+                raise ValueError("表格解析后未获得有效数据")
 
             print(f"✅ [{name}] 抓取成功! 日期: {curr_date}, 获得 {len(records)} 条航线数据")
             return name, records, None
@@ -380,8 +389,7 @@ def fetch_ccfi_data(name, url, chrome_options):
 
 def fetch_investing_economic_calendar(name, url, chrome_options, days_to_keep=150):
     """
-    [新增] 抓取 Investing.com 财经日历数据 (如初请失业金)
-    结构: Release Date | Time | Actual | Forecast | Previous
+    抓取 Investing.com 财经日历数据
     """
     max_retries = 3
     last_error = None
@@ -397,8 +405,6 @@ def fetch_investing_economic_calendar(name, url, chrome_options, days_to_keep=15
             driver.set_page_load_timeout(45)
             driver.get(url)
             
-            # 展开更多数据 (Show more) - 这是一个通常的做法，但Investing可能是直接加载长表或分页
-            # 尝试查找表格
             try:
                 WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.TAG_NAME, "table")))
             except:
@@ -410,7 +416,6 @@ def fetch_investing_economic_calendar(name, url, chrome_options, days_to_keep=15
             target_df = None
             for df in dfs:
                 cols = [str(c).lower() for c in df.columns]
-                # 关键列名: release date, actual, forecast
                 if any("release date" in c for c in cols) and any("actual" in c for c in cols):
                     target_df = df
                     break
@@ -418,10 +423,7 @@ def fetch_investing_economic_calendar(name, url, chrome_options, days_to_keep=15
             if target_df is None:
                 raise ValueError("未找到财经日历数据表格")
             
-            # 清理数据
-            # 列名通常是 Release Date, Time, Actual, Forecast, Previous
             df = target_df.copy()
-            # 统一列名
             new_cols = {}
             for c in df.columns:
                 c_str = str(c).strip()
@@ -432,11 +434,8 @@ def fetch_investing_economic_calendar(name, url, chrome_options, days_to_keep=15
             
             df.rename(columns=new_cols, inplace=True)
             
-            # 清洗日期: "Jan 08, 2026" -> Datetime
-            # 注意:有些行可能是空或 "(P)" 修正标记，需要处理
             def parse_calendar_date(x):
                 try:
-                    # 移除括号内容 (e.g., revised markers)
                     x = re.sub(r'\(.*?\)', '', str(x)).strip()
                     return pd.to_datetime(x, format='%b %d, %Y')
                 except:
@@ -448,13 +447,11 @@ def fetch_investing_economic_calendar(name, url, chrome_options, days_to_keep=15
             df['std_date'] = df['Release Date'].apply(parse_calendar_date)
             df = df.dropna(subset=['std_date'])
             
-            # 筛选时间范围
             cutoff_date = pd.Timestamp.now() - pd.Timedelta(days=days_to_keep)
             df = df[df['std_date'] >= cutoff_date]
             
             records = []
             for _, row in df.iterrows():
-                # 格式化输出
                 records.append({
                     "日期": row['std_date'].strftime('%Y-%m-%d'),
                     "实际值": str(row.get('Actual', '')).strip(),
@@ -481,6 +478,7 @@ def fetch_investing_economic_calendar(name, url, chrome_options, days_to_keep=15
 def fetch_investing_source(name, url, chrome_options, days_to_keep=180):
     """
     通用 Investing.com 历史数据抓取
+    [修复] 支持英文表头 (Date, Price, Vol.) 以修复 BDI 指数抓取失败问题
     """
     max_retries = 5
     last_error = None
@@ -510,25 +508,55 @@ def fetch_investing_source(name, url, chrome_options, days_to_keep=180):
                 raise ValueError("页面解析为空，未找到表格数据")
 
             target_df = None
+            
+            # [修改] 增强表头匹配逻辑，同时支持中文和英文
+            # 中文: 日期, 收盘, 交易量
+            # 英文: Date, Price, Vol.
             for df in dfs:
                 cols = [str(c).replace(" ", "").replace("\n", "").strip() for c in df.columns]
-                if all(k in cols for k in ['日期', '收盘', '交易量']):
-                    df.columns = cols 
+                
+                # Check for Chinese Headers
+                if all(k in cols for k in ['日期', '收盘']):
+                    target_df = df
+                    break
+                
+                # Check for English Headers
+                if all(k in cols for k in ['Date', 'Price']):
                     target_df = df
                     break
             
             if target_df is None:
+                # Fallback: check only date/close partials
                 for df in dfs:
-                    cols = [str(c).replace(" ", "").replace("\n", "").strip() for c in df.columns]
-                    if '日期' in cols and '收盘' in cols:
-                        df.columns = cols
+                    cols = [str(c).strip() for c in df.columns]
+                    if ('日期' in cols and '收盘' in cols) or ('Date' in cols and 'Price' in cols):
                         target_df = df
                         break
 
             if target_df is None:
-                    raise ValueError(f"未找到符合 Investing 格式的表格")
+                    raise ValueError(f"未找到符合 Investing 格式的表格 (需包含 日期/收盘 或 Date/Price)")
 
             df = target_df.copy()
+            
+            # Standardize Column Names
+            # Map English to standard keys used in code
+            rename_map = {
+                '日期': '日期', '收盘': 'close', '开盘': 'open',
+                '高': 'high', '低': 'low', '交易量': 'volume', '涨跌幅': 'change_pct',
+                'Date': '日期', 'Price': 'close', 'Open': 'open',
+                'High': 'high', 'Low': 'low', 'Vol.': 'volume', 'Change %': 'change_pct'
+            }
+            
+            # Apply renaming
+            actual_cols = {}
+            for col in df.columns:
+                clean_col = str(col).strip()
+                if clean_col in rename_map:
+                    actual_cols[col] = rename_map[clean_col]
+            
+            df = df.rename(columns=actual_cols)
+            
+            # Date Cleaning
             df['_std_date'] = df['日期'].apply(selenium_utils.clean_investing_date)
             df = df.dropna(subset=['_std_date'])
             df['_std_date'] = pd.to_datetime(df['_std_date'])
@@ -536,13 +564,6 @@ def fetch_investing_source(name, url, chrome_options, days_to_keep=180):
             cutoff_date = pd.Timestamp.now() - pd.Timedelta(days=days_to_keep)
             df = df[df['_std_date'] >= cutoff_date]
             df['_std_date'] = df['_std_date'].dt.strftime('%Y-%m-%d')
-            
-            rename_map = {
-                '日期': '日期', '收盘': 'close', '开盘': 'open',
-                '高': 'high', '低': 'low', '交易量': 'volume', '涨跌幅': 'change_pct'
-            }
-            available_map = {k: v for k, v in rename_map.items() if k in df.columns}
-            df = df.rename(columns=available_map)
             
             if 'volume' in df.columns:
                 df['volume'] = df['volume'].apply(selenium_utils.parse_volume)
@@ -553,8 +574,7 @@ def fetch_investing_source(name, url, chrome_options, days_to_keep=180):
             if 'change_pct' in df.columns:
                 df['change_pct'] = df['change_pct'].apply(selenium_utils.parse_percentage)
 
-            keep_cols = ['_std_date'] + list(available_map.values())
-            keep_cols = list(dict.fromkeys(keep_cols))
+            keep_cols = ['_std_date'] + list(set(rename_map.values()))
             final_cols = [c for c in keep_cols if c in df.columns]
             
             df = df[final_cols]
