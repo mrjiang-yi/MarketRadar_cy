@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python
 # -*- coding:utf-8 -*-
 """
@@ -300,41 +301,53 @@ def fetch_vietnam_index_klines():
 def fetch_southbound_flow():
     """获取南向资金净流入 (近20天) - 使用 stock_hsgt_hist_em"""
     print("   -> 获取南向资金数据 (AKShare)...")
-    try:
-        # 修正接口: stock_hsgt_hist_em (symbol="南向资金")
-        df = ak.stock_hsgt_hist_em(symbol="南向资金")
-        if df.empty:
-            return [], "AKShare returned empty dataframe"
-        
-        # 结果列名通常包含: 日期, 当日成交净买额, 领涨股 等
-        # 我们需要 '日期' 和 '当日成交净买额'
-        if '日期' not in df.columns or '当日成交净买额' not in df.columns:
-            return [], f"Unexpected columns: {df.columns.tolist()}"
+    
+    # [修改] 添加业务层重试机制
+    max_retries = 3
+    last_error = None
+    
+    for attempt in range(1, max_retries + 1):
+        try:
+            # 修正接口: stock_hsgt_hist_em (symbol="南向资金")
+            df = ak.stock_hsgt_hist_em(symbol="南向资金")
+            if df.empty:
+                raise ValueError("AKShare returned empty dataframe")
             
-        df['日期'] = pd.to_datetime(df['日期'])
-        df = df.sort_values('日期')
-        
-        # [修改] 改为近 20 天，修复报告过长问题 (原为180天)
-        cutoff_date = datetime.datetime.now() - datetime.timedelta(days=20)
-        df = df[df['日期'] >= cutoff_date]
-        
-        df['日期'] = df['日期'].dt.strftime('%Y-%m-%d')
-        # 转换单位，原单位通常为"亿元" (根据文档输出)，这里保持原值，但在前端需注意单位
-        # 或者转换为万元/元？ akshare文档显示单位是 亿元。
-        # 我们存入 dict
-        
-        data = []
-        for _, row in df.iterrows():
-            data.append({
-                "日期": row['日期'],
-                "净流入(亿元)": row['当日成交净买额']
-            })
-        
-        data.sort(key=lambda x: x["日期"], reverse=True)
-        return data, None
-    except Exception as e:
-        print(f"南向资金获取失败: {e}")
-        return [], str(e)
+            # 结果列名通常包含: 日期, 当日成交净买额, 领涨股 等
+            # 我们需要 '日期' 和 '当日成交净买额'
+            if '日期' not in df.columns or '当日成交净买额' not in df.columns:
+                raise ValueError(f"Unexpected columns: {df.columns.tolist()}")
+                
+            df['日期'] = pd.to_datetime(df['日期'])
+            df = df.sort_values('日期')
+            
+            # [修改] 改为近 20 天，修复报告过长问题 (原为180天)
+            cutoff_date = datetime.datetime.now() - datetime.timedelta(days=20)
+            df = df[df['日期'] >= cutoff_date]
+            
+            df['日期'] = df['日期'].dt.strftime('%Y-%m-%d')
+            # 转换单位，原单位通常为"亿元" (根据文档输出)，这里保持原值，但在前端需注意单位
+            # 或者转换为万元/元？ akshare文档显示单位是 亿元。
+            # 我们存入 dict
+            
+            data = []
+            for _, row in df.iterrows():
+                data.append({
+                    "日期": row['日期'],
+                    "净流入(亿元)": row['当日成交净买额']
+                })
+            
+            data.sort(key=lambda x: x["日期"], reverse=True)
+            return data, None
+            
+        except Exception as e:
+            last_error = e
+            if attempt < max_retries:
+                print(f"   ⚠️ 南向资金获取重试 ({attempt}/{max_retries}): {e}")
+                time.sleep(2) # 稍作等待
+    
+    print(f"南向资金获取失败: {last_error}")
+    return [], str(last_error)
 
 def fetch_star50_valuation():
     """获取科创50指数估值 (PE/PB) (近6个月)"""

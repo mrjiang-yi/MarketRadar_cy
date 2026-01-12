@@ -130,7 +130,8 @@ class MacroDataScraper:
     def fetch_cnn_fear_greed(self, name, url):
         """
         专门抓取 CNN Fear & Greed Index
-        结构: Timeline -> Current -> Previous close -> 1 week ago -> 1 month ago -> 1 year ago
+        结构变动频繁，改为非顺序的独立正则匹配。
+        优先匹配 "Fear & Greed Index [Num]" (Header) 或 "Timeline [Num]"
         """
         max_retries = 5
         last_error = None
@@ -145,80 +146,93 @@ class MacroDataScraper:
                     "source": """Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"""
                 })
 
-                # 设置大窗口以确保桌面布局，防止Timeline被折叠
+                # 设置大窗口以确保桌面布局
                 driver.set_window_size(1920, 1080)
-                
                 driver.set_page_load_timeout(45)
                 driver.get(url)
 
-                # [新增] 打印页面标题以便调试 (判断是否被反爬或跳转)
                 try:
                     print(f"   [Debug] Page Title: {driver.title}")
                 except:
                     pass
                 
-                # 稍微滚动一下页面，触发可能存在的懒加载
+                # 滚动页面
                 try:
                     driver.execute_script("window.scrollBy(0, 500);")
                     time.sleep(2)
                 except:
                     pass
                 
-                # 等待关键字出现
+                # 尝试等待 Timeline，但不强求，因为它可能不包含数字
                 try:
-                    WebDriverWait(driver, 20).until(
+                    WebDriverWait(driver, 15).until(
                         EC.text_to_be_present_in_element((By.TAG_NAME, "body"), "Timeline")
                     )
                 except:
-                    print(f"⚠️ [{name}] 等待页面关键字 'Timeline' 超时...")
+                    print(f"⚠️ [{name}] 等待 'Timeline' 关键字超时，继续解析...")
                 
                 body_text = driver.find_element(By.TAG_NAME, "body").text
                 print(f"   [Debug] Body text length: {len(body_text)}")
                 
-                # 文本规范化：将所有空白字符(换行、制表符等)替换为单个空格
+                # 文本规范化
                 normalized_text = re.sub(r'\s+', ' ', body_text).strip()
                 
-                # 使用正则匹配文本块 (Case Insensitive)
-                # 目标结构示例(规范化后): "Timeline 51 Previous close 50 1 week ago 47 1 month ago 42 1 year ago 25"
-                pattern = r"Timeline\s+(\d+)\s+Previous close\s+(\d+)\s+1 week ago\s+(\d+)\s+1 month ago\s+(\d+)\s+1 year ago\s+(\d+)"
-                match = re.search(pattern, normalized_text, re.IGNORECASE)
+                # --- 独立解析各个指标 ---
                 
-                if match:
-                    current_val = int(match.group(1))
-                    prev_close = int(match.group(2))
-                    week_ago = int(match.group(3))
-                    month_ago = int(match.group(4))
-                    year_ago = int(match.group(5))
-                    
+                # 1. 当前值 (Current Value)
+                # 策略 A: "Fear & Greed Index 51" (通常在 Header)
+                # 策略 B: "Timeline 51" (有时在 Body)
+                # 策略 C: "Now: 51"
+                current_val = None
+                
+                match_header = re.search(r"Fear & Greed Index\s+(\d+)", normalized_text, re.IGNORECASE)
+                if match_header:
+                    current_val = int(match_header.group(1))
+                else:
+                    match_timeline = re.search(r"Timeline\s+(\d+)", normalized_text, re.IGNORECASE)
+                    if match_timeline:
+                        current_val = int(match_timeline.group(1))
+
+                # 2. 历史值
+                prev_close = 0
+                week_ago = 0
+                month_ago = 0
+                year_ago = 0
+                
+                m_prev = re.search(r"Previous close\s+(\d+)", normalized_text, re.IGNORECASE)
+                if m_prev: prev_close = int(m_prev.group(1))
+                
+                m_week = re.search(r"1 week ago\s+(\d+)", normalized_text, re.IGNORECASE)
+                if m_week: week_ago = int(m_week.group(1))
+                
+                m_month = re.search(r"1 month ago\s+(\d+)", normalized_text, re.IGNORECASE)
+                if m_month: month_ago = int(m_month.group(1))
+                
+                # "1 year ago" 经常因为页面截断或懒加载缺失，设为可选
+                m_year = re.search(r"1 year ago\s+(\d+)", normalized_text, re.IGNORECASE)
+                if m_year: year_ago = int(m_year.group(1))
+                
+                # --- 验证结果 ---
+                if current_val is not None:
                     record = {
                         "日期": pd.Timestamp.now().strftime('%Y-%m-%d'),
                         "最新值": current_val,
                         "前值": prev_close,
                         "一周前": week_ago,
                         "一月前": month_ago,
-                        "一年前": year_ago,
+                        "一年前": year_ago, # 可能为 0
                         "description": "CNN Fear & Greed Index"
                     }
-                    
-                    print(f"✅ [{name}] 抓取成功! 当前值: {current_val}")
+                    print(f"✅ [{name}] 抓取成功! 当前值: {current_val} (前值:{prev_close}, 1周:{week_ago})")
                     return name, [record], None
                 else:
-                    # [新增] 增强调试打印
-                    print(f"⚠️ 正则匹配失败。")
-                    
-                    # 尝试查找 "Timeline" 关键字的位置
+                    # Debug 辅助
+                    print(f"⚠️ 未找到当前值 (Current Value)。")
                     key_index = normalized_text.lower().find("timeline")
                     if key_index != -1:
-                        # 打印关键字附近的内容 (上下文)
-                        start = max(0, key_index - 20)
-                        end = min(len(normalized_text), key_index + 150)
-                        preview = normalized_text[start:end]
+                        preview = normalized_text[max(0, key_index-50):min(len(normalized_text), key_index+100)]
                         print(f"   [Debug Context] ...{preview}...")
-                    else:
-                        # 如果找不到关键字，打印开头部分
-                        print(f"   [Debug Head] 未找到 'Timeline'。页面开头: {normalized_text[:100]}...")
-
-                    raise ValueError("页面内容未匹配到预期的 Timeline 数据结构")
+                    raise ValueError("无法解析当前恐惧贪婪指数数值")
 
             except Exception as e:
                 last_error = str(e)
