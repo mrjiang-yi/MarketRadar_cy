@@ -7,6 +7,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+from itertools import groupby
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
@@ -256,12 +257,10 @@ def main():
         ma_data_dict = {"general": [], "commodities": []}
         all_status_logs.append({'name': 'kline_module', 'status': False, 'error': str(e)})
 
-    # [Step 3.5] 处理恒生医疗保健指数 (恢复并修复逻辑)
-    # 策略: 抓取时使用长数据(已由selenium_core完成) -> 计算均线 -> 切片保留最近20天放入报告
+    # [Step 3.5] 处理恒生医疗保健指数
     hshci_key = "恒生医疗保健指数"
     hk_data = combined_macro.get("hk", {})
     
-    # 清理: 如果 market_klines 里有(来自AkShare失败的空数据), 先删掉
     if "data" in kline_data_dict and kline_data_dict["data"]:
         if hshci_key in kline_data_dict["data"]:
             del kline_data_dict["data"][hshci_key]
@@ -273,32 +272,26 @@ def main():
             raw_data = hk_data[hshci_key]
             df_hshci = pd.DataFrame(raw_data)
             
-            # 1. 日期标准化 (处理中文日期)
             if '日期' in df_hshci.columns:
                 df_hshci['date'] = df_hshci['日期'].apply(parse_chinese_date)
             elif 'date' in df_hshci.columns:
                 df_hshci['date'] = pd.to_datetime(df_hshci['date'])
             
-            # 2. 数值转换
             df_hshci['name'] = hshci_key
             for col in ['close', 'open', 'high', 'low', 'volume']:
                 if col in df_hshci.columns:
                     df_hshci[col] = pd.to_numeric(df_hshci[col], errors='coerce')
 
-            # 3. 计算均线 (基于完整历史数据)
             if 'date' in df_hshci.columns:
-                 # 计算均线
                  hshci_ma_list = utils.calculate_ma(df_hshci)
                  if hshci_ma_list:
                      ma_data_dict["general"].extend(hshci_ma_list)
                      print(f"✅ {hshci_key} 均线计算完成")
                  
-                 # 4. 数据切片 (仅保留最近 20 天，修复"时间区间太长"问题)
                  cutoff_date = pd.Timestamp.now() - pd.Timedelta(days=REPORT_DAYS)
                  df_slice = df_hshci[df_hshci['date'] >= cutoff_date].copy()
                  df_slice['date'] = df_slice['date'].dt.strftime('%Y-%m-%d')
                  
-                 # 替换 combined_macro 中的长数据为切片后的短数据
                  sliced_records = df_slice.to_dict(orient='records')
                  combined_macro['hk'][hshci_key] = sliced_records
                  print(f"✂️ {hshci_key} 数据已切片 (保留最近 {len(sliced_records)} 条)")
@@ -306,6 +299,7 @@ def main():
         except Exception as e_ma:
              print(f"⚠️ {hshci_key} 均线计算或切片失败: {e_ma}")
 
+    # [Step 4/4] 获取越南胡志明指数 (Investing.com)...
     print("\n[Step 4/4] 获取越南胡志明指数 (Investing.com)...")
     try:
         vni_data, vni_err = fetch_data.fetch_vietnam_index_klines()
@@ -339,6 +333,47 @@ def main():
         print(f"❌ 越南指数模块异常: {e}")
         all_status_logs.append({'name': 'vni_module', 'status': False, 'error': str(e)})
 
+    # [Step 4.5] 处理 A股指数 (新增逻辑)
+    # 从 combined_macro 中提取，并计算均线
+    ashare_list = combined_macro.get("market_klines", {}).pop("A股指数", None) # Pop to remove from raw macro data
+    if ashare_list:
+        print(f"\n[Step 4.5] ⚡ 正在计算 A股指数 均线...")
+        # ashare_list 是扁平列表: [{date, name, close...}, ...]
+        # 按 name 分组处理
+        try:
+            # Sort by name first for groupby
+            ashare_list.sort(key=lambda x: x['name'])
+            for name, group in groupby(ashare_list, key=lambda x: x['name']):
+                records = list(group)
+                # Sort by date
+                records.sort(key=lambda x: x['date'])
+                
+                df_ashare = pd.DataFrame(records)
+                df_ashare['date'] = pd.to_datetime(df_ashare['date'])
+                
+                # Ensure numeric columns
+                cols = ['close', 'open', 'high', 'low', 'volume']
+                for c in cols:
+                    if c in df_ashare.columns:
+                        df_ashare[c] = pd.to_numeric(df_ashare[c], errors='coerce')
+                    
+                # Calculate MA
+                ma_res = utils.calculate_ma(df_ashare)
+                if ma_res:
+                    ma_data_dict["general"].extend(ma_res)
+                
+                # Prepare for K-line data storage (convert date back to string)
+                df_ashare['date'] = df_ashare['date'].dt.strftime('%Y-%m-%d')
+                
+                # Update kline_data_dict
+                if "data" not in kline_data_dict:
+                     kline_data_dict["data"] = {}
+                kline_data_dict["data"][name] = df_ashare.to_dict(orient='records')
+                
+                print(f"   Processed {name}: {len(records)} records")
+        except Exception as e:
+            print(f"⚠️ A股指数处理失败: {e}")
+
     print("\n[Step 5] 整合数据并清洗...")
     final_data = merge_final_report(combined_macro, kline_data_dict, ma_data_dict)
     final_data = clean_and_round(final_data)
@@ -361,7 +396,7 @@ def main():
     if save_compact_json(final_data, OUTPUT_FILENAME):
         try:
             email_subject = f"MarketRadar全量日报_{datetime.now(TZ_CN).strftime('%Y-%m-%d')}"
-            base_body = f"生成时间: {datetime.now(TZ_CN).strftime('%Y-%m-%d %H:%M:%S')}\n包含: 宏观(Selenium), 汇率/国债(Online), K线(Stock/VNI/科创50), 信号扫描(MyTT)\n\n"
+            base_body = f"生成时间: {datetime.now(TZ_CN).strftime('%Y-%m-%d %H:%M:%S')}\n包含: 宏观(Selenium), 汇率/国债(Online), K线(Stock/VNI/科创50/A股), 信号扫描(MyTT)\n\n"
             
             email_body = generate_email_body_summary(cleaned_logs, signal_summary)
             email_body = base_body + email_body

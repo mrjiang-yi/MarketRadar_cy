@@ -478,11 +478,6 @@ def fetch_ashare_indices():
     print("   -> 获取A股主要指数数据 (AKShare)...")
     
     # 映射关系: 名称 -> AKShare symbol (东财接口)
-    # 上证指数: sh000001
-    # 深证成指: sz399001
-    # 创业板指: sz399006
-    # 沪深300: sh000300
-    
     index_list = [
         {"name": "上证指数", "symbol": "sh000001"},
         {"name": "深证成指", "symbol": "sz399001"},
