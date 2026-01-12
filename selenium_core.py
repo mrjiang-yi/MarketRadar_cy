@@ -30,7 +30,8 @@ class MacroDataScraper:
             "BDI_波罗的海指数": "https://www.investing.com/indices/baltic-dry-historical-data",
             "USA_Initial_Jobless": "https://www.investing.com/economic-calendar/initial-jobless-claims-294",
             "CBOE_SKEW": "https://www.investing.com/indices/cboe-skew-historical-data",
-            "ICE_BofA_HighYield": "https://www.investing.com/indices/ice-bofa-us-high-yield-historical-data"
+            "ICE_BofA_HighYield": "https://www.investing.com/indices/ice-bofa-us-high-yield-historical-data",
+            "Insider_BuySell_Ratio_USA": "https://www.gurufocus.com/economic_indicators/4359/insider-buysell-ratio-usa-overall-market"
         }
 
         self.key_mapping = {
@@ -53,7 +54,8 @@ class MacroDataScraper:
             "BDI_波罗的海指数": ("market_fx", "BDI_波罗的海指数"),
             "USA_Initial_Jobless": ("usa", "Initial_Jobless_Claims"),
             "CBOE_SKEW": ("market_fx", "CBOE_SKEW"),
-            "ICE_BofA_HighYield": ("market_fx", "ICE_BofA_HighYield")
+            "ICE_BofA_HighYield": ("market_fx", "ICE_BofA_HighYield"),
+            "Insider_BuySell_Ratio_USA": ("usa", "Insider_BuySell_Ratio")
         }
         
         self.results = {}
@@ -102,6 +104,9 @@ class MacroDataScraper:
             
         if name == "CCFI_运价指数":
             return selenium_scrapers.fetch_ccfi_data(name, url, self.chrome_options)
+            
+        if name == "Insider_BuySell_Ratio_USA":
+            return selenium_scrapers.fetch_gurufocus_insider_ratio(name, url, self.chrome_options)
 
         # 4. 默认通用抓取 (Eastmoney 等)
         days_to_keep = 30 if "南向资金" in name else 180

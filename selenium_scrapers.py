@@ -271,7 +271,6 @@ def fetch_fed_rate_monitor(name, url, chrome_options):
 def fetch_ccfi_data(name, url, chrome_options):
     """
     抓取中国出口集装箱运价指数 (CCFI)
-    [修复] 宽松表头匹配逻辑，处理复杂嵌套表头和换行
     """
     max_retries = 3
     last_error = None
@@ -301,7 +300,6 @@ def fetch_ccfi_data(name, url, chrome_options):
             # 查找目标表格 (宽松匹配 "航线" 关键字)
             target_df = None
             for df in dfs:
-                # 尝试将所有列名合并为字符串进行检查
                 header_str = ""
                 if isinstance(df.columns, pd.MultiIndex):
                     header_str = " ".join([str(c) for col in df.columns for c in col])
@@ -316,11 +314,9 @@ def fetch_ccfi_data(name, url, chrome_options):
                 raise ValueError("未找到包含 '航线' 的表格")
 
             # 提取表头中的日期
-            # 表头示例: "上期 2025-12-26", "本期 2026-01-09"
             prev_date = None
             curr_date = None
             
-            # 展平列名以便搜索日期
             flat_cols = []
             if isinstance(target_df.columns, pd.MultiIndex):
                 for col in target_df.columns:
@@ -340,14 +336,11 @@ def fetch_ccfi_data(name, url, chrome_options):
                 curr_date = pd.Timestamp.now().strftime('%Y-%m-%d')
 
             records = []
-            # 假设数据结构相对固定: Col 0=航线, Col 1=上期, Col 2=本期, Col 3=涨跌
             for _, row in target_df.iterrows():
                 try:
                     route_name = str(row.iloc[0]).strip()
-                    # 跳过标题行或无效行
                     if "航线" in route_name or route_name == "nan": continue
                     
-                    # 简单清洗数据 (去除逗号)
                     def clean_val(x):
                         return float(str(x).replace(',', '').replace('nan', '0'))
 
@@ -478,7 +471,6 @@ def fetch_investing_economic_calendar(name, url, chrome_options, days_to_keep=15
 def fetch_investing_source(name, url, chrome_options, days_to_keep=180):
     """
     通用 Investing.com 历史数据抓取
-    [修复] 支持英文表头 (Date, Price, Vol.) 以修复 BDI 指数抓取失败问题
     """
     max_retries = 5
     last_error = None
@@ -509,17 +501,13 @@ def fetch_investing_source(name, url, chrome_options, days_to_keep=180):
 
             target_df = None
             
-            # [修改] 增强表头匹配逻辑，同时支持中文和英文
-            # 中文: 日期, 收盘, 交易量
-            # 英文: Date, Price, Vol.
+            # 增强表头匹配逻辑
             for df in dfs:
                 cols = [str(c).replace(" ", "").replace("\n", "").strip() for c in df.columns]
-                
                 # Check for Chinese Headers
                 if all(k in cols for k in ['日期', '收盘']):
                     target_df = df
                     break
-                
                 # Check for English Headers
                 if all(k in cols for k in ['Date', 'Price']):
                     target_df = df
@@ -534,12 +522,11 @@ def fetch_investing_source(name, url, chrome_options, days_to_keep=180):
                         break
 
             if target_df is None:
-                    raise ValueError(f"未找到符合 Investing 格式的表格 (需包含 日期/收盘 或 Date/Price)")
+                    raise ValueError(f"未找到符合 Investing 格式的表格")
 
             df = target_df.copy()
             
             # Standardize Column Names
-            # Map English to standard keys used in code
             rename_map = {
                 '日期': '日期', '收盘': 'close', '开盘': 'open',
                 '高': 'high', '低': 'low', '交易量': 'volume', '涨跌幅': 'change_pct',
@@ -547,7 +534,6 @@ def fetch_investing_source(name, url, chrome_options, days_to_keep=180):
                 'High': 'high', 'Low': 'low', 'Vol.': 'volume', 'Change %': 'change_pct'
             }
             
-            # Apply renaming
             actual_cols = {}
             for col in df.columns:
                 clean_col = str(col).strip()
@@ -556,7 +542,6 @@ def fetch_investing_source(name, url, chrome_options, days_to_keep=180):
             
             df = df.rename(columns=actual_cols)
             
-            # Date Cleaning
             df['_std_date'] = df['日期'].apply(selenium_utils.clean_investing_date)
             df = df.dropna(subset=['_std_date'])
             df['_std_date'] = pd.to_datetime(df['_std_date'])
@@ -589,6 +574,90 @@ def fetch_investing_source(name, url, chrome_options, days_to_keep=180):
             print(f"❌ [{name}] 失败: {str(e)[:100]}")
             if attempt < max_retries:
                 time.sleep(2)
+        finally:
+            if driver:
+                try:
+                    driver.quit()
+                except:
+                    pass
+    return name, [], last_error
+
+def fetch_gurufocus_insider_ratio(name, url, chrome_options):
+    """
+    [新增] 抓取 GuruFocus Insider Buy/Sell Ratio - Historical Data Table
+    """
+    max_retries = 5
+    last_error = None
+    
+    for attempt in range(1, max_retries + 1):
+        print(f"🌍 [{name}] 第 {attempt}/{max_retries} 次尝试 (Selenium - GuruFocus)...")
+        driver = None
+        try:
+            driver = webdriver.Chrome(options=chrome_options)
+            driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+                "source": """Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"""
+            })
+            driver.set_page_load_timeout(60)
+            driver.get(url)
+            
+            # 等待表格出现
+            try:
+                WebDriverWait(driver, 20).until(
+                    EC.text_to_be_present_in_element((By.TAG_NAME, "body"), "Historical Data")
+                )
+            except:
+                print(f"⚠️ [{name}] 等待页面关键字 'Historical Data' 超时...")
+
+            html = driver.page_source
+            dfs = pd.read_html(StringIO(html))
+            
+            if not dfs:
+                raise ValueError("页面解析为空，未找到表格数据")
+
+            # 寻找包含 "Date", "Value", "YOY" 的表格
+            target_df = None
+            for df in dfs:
+                cols = [str(c).strip() for c in df.columns]
+                if "Date" in cols and "Value" in cols and any("YOY" in c for c in cols):
+                    target_df = df
+                    break
+            
+            if target_df is None:
+                raise ValueError("未找到 'Historical Data' 表格 (需包含 Date/Value/YOY)")
+
+            # 清洗数据
+            records = []
+            for _, row in target_df.iterrows():
+                try:
+                    date_str = str(row['Date']).strip()
+                    val_str = str(row['Value']).strip()
+                    # 查找包含 YOY 的列名
+                    yoy_col = next(c for c in target_df.columns if "YOY" in str(c))
+                    yoy_str = str(row[yoy_col]).strip()
+                    
+                    # 简单验证日期格式 YYYY-MM-DD
+                    if not re.match(r"\d{4}-\d{2}-\d{2}", date_str):
+                        continue
+
+                    records.append({
+                        "日期": date_str,
+                        "Value": float(val_str.replace(',', '')),
+                        "YOY": yoy_str
+                    })
+                except:
+                    continue
+            
+            if not records:
+                raise ValueError("未提取到有效数据行")
+
+            print(f"✅ [{name}] 抓取成功! 获得 {len(records)} 条记录")
+            return name, records, None
+
+        except Exception as e:
+            last_error = str(e)
+            print(f"❌ [{name}] 失败: {str(e)[:100]}")
+            if attempt < max_retries:
+                time.sleep(3)
         finally:
             if driver:
                 try:
