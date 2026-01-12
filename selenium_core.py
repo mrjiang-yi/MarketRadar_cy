@@ -132,7 +132,7 @@ class MacroDataScraper:
         专门抓取 CNN Fear & Greed Index
         结构: Timeline -> Current -> Previous close -> 1 week ago -> 1 month ago -> 1 year ago
         """
-        max_retries = 3
+        max_retries = 5  # [修改] 增加重试次数到5次
         last_error = None
         
         for attempt in range(1, max_retries + 1):
@@ -145,34 +145,38 @@ class MacroDataScraper:
                     "source": """Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"""
                 })
 
-                driver.set_page_load_timeout(45) # CNN页面可能较重，增加超时
+                # [新增] 设置大窗口以确保桌面布局，防止Timeline被折叠
+                driver.set_window_size(1920, 1080)
+                
+                driver.set_page_load_timeout(45)
                 driver.get(url)
+                
+                # [新增] 稍微滚动一下页面，触发可能存在的懒加载
+                try:
+                    driver.execute_script("window.scrollBy(0, 500);")
+                    time.sleep(2)
+                except:
+                    pass
                 
                 # 等待关键字出现
                 try:
+                    # 尝试等待 Timeline 关键字，但也允许直接解析 body
                     WebDriverWait(driver, 20).until(
                         EC.text_to_be_present_in_element((By.TAG_NAME, "body"), "Timeline")
                     )
                 except:
-                    print(f"⚠️ [{name}] 等待页面关键字超时，尝试直接解析...")
+                    print(f"⚠️ [{name}] 等待页面关键字超时，尝试直接解析全文...")
                 
                 body_text = driver.find_element(By.TAG_NAME, "body").text
                 
-                # 使用正则匹配文本块
-                # 目标结构示例:
-                # Timeline
-                # 51
-                # Previous close
-                # 50
-                # 1 week ago
-                # 47
-                # 1 month ago
-                # 42
-                # 1 year ago
-                # 25
+                # [新增] 文本规范化：将所有空白字符(换行、制表符等)替换为单个空格
+                # 这样可以忽略网页布局变化导致的换行位置差异
+                normalized_text = re.sub(r'\s+', ' ', body_text).strip()
                 
+                # 使用正则匹配文本块 (Case Insensitive)
+                # 目标结构示例(规范化后): "Timeline 51 Previous close 50 1 week ago 47 1 month ago 42 1 year ago 25"
                 pattern = r"Timeline\s+(\d+)\s+Previous close\s+(\d+)\s+1 week ago\s+(\d+)\s+1 month ago\s+(\d+)\s+1 year ago\s+(\d+)"
-                match = re.search(pattern, body_text)
+                match = re.search(pattern, normalized_text, re.IGNORECASE)
                 
                 if match:
                     current_val = int(match.group(1))
@@ -194,13 +198,14 @@ class MacroDataScraper:
                     print(f"✅ [{name}] 抓取成功! 当前值: {current_val}")
                     return name, [record], None
                 else:
+                    # 如果匹配失败，记录前500个字符用于调试（可选，这里为了简洁不输出太多）
                     raise ValueError("页面内容未匹配到预期的 Timeline 数据结构")
 
             except Exception as e:
                 last_error = str(e)
                 print(f"❌ [{name}] 失败: {str(e)[:100]}")
                 if attempt < max_retries:
-                    time.sleep(2)
+                    time.sleep(3) # 稍微增加等待时间
             finally:
                 if driver:
                     try:
