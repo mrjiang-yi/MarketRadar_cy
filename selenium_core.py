@@ -32,7 +32,8 @@ class MacroDataScraper:
             "美国_利率决议": "https://data.eastmoney.com/cjsj/foreign_8_0.html",
             "日本_央行利率决议": "https://data.eastmoney.com/cjsj/foreign_3_0.html",
             "恒生医疗保健指数": "https://cn.investing.com/indices/hang-seng-healthcare-historical-data",
-            "CNN_FearGreed": "https://edition.cnn.com/markets/fear-and-greed"
+            "CNN_FearGreed": "https://edition.cnn.com/markets/fear-and-greed",
+            "CBOE_PutCallRatio": "https://www.cboe.com/us/options/market_statistics/daily/"
         }
 
         self.key_mapping = {
@@ -48,7 +49,8 @@ class MacroDataScraper:
             "美国_利率决议": ("usa", "利率决议"),
             "日本_央行利率决议": ("japan", "央行利率"),
             "恒生医疗保健指数": ("hk", "恒生医疗保健指数"),
-            "CNN_FearGreed": ("market_fx", "CNN_FearGreed")
+            "CNN_FearGreed": ("market_fx", "CNN_FearGreed"),
+            "CBOE_PutCallRatio": ("market_fx", "CBOE_PutCallRatio")
         }
         
         self.results = {}
@@ -131,7 +133,7 @@ class MacroDataScraper:
         """
         专门抓取 CNN Fear & Greed Index
         结构变动频繁，改为非顺序的独立正则匹配。
-        优先匹配 "Fear & Greed Index [Num]" (Header) 或 "Timeline [Num]"
+        [修复] 增加页面滚动到底部的逻辑，确保 '1 year ago' 等底部元素被加载。
         """
         max_retries = 5
         last_error = None
@@ -156,14 +158,14 @@ class MacroDataScraper:
                 except:
                     pass
                 
-                # 滚动页面
+                # [关键修改] 滚动到底部，确保 Timeline 历史数据全部加载
                 try:
-                    driver.execute_script("window.scrollBy(0, 500);")
-                    time.sleep(2)
+                    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                    time.sleep(3) 
                 except:
                     pass
                 
-                # 尝试等待 Timeline，但不强求，因为它可能不包含数字
+                # 尝试等待 Timeline
                 try:
                     WebDriverWait(driver, 15).until(
                         EC.text_to_be_present_in_element((By.TAG_NAME, "body"), "Timeline")
@@ -180,9 +182,6 @@ class MacroDataScraper:
                 # --- 独立解析各个指标 ---
                 
                 # 1. 当前值 (Current Value)
-                # 策略 A: "Fear & Greed Index 51" (通常在 Header)
-                # 策略 B: "Timeline 51" (有时在 Body)
-                # 策略 C: "Now: 51"
                 current_val = None
                 
                 match_header = re.search(r"Fear & Greed Index\s+(\d+)", normalized_text, re.IGNORECASE)
@@ -208,7 +207,7 @@ class MacroDataScraper:
                 m_month = re.search(r"1 month ago\s+(\d+)", normalized_text, re.IGNORECASE)
                 if m_month: month_ago = int(m_month.group(1))
                 
-                # "1 year ago" 经常因为页面截断或懒加载缺失，设为可选
+                # [关键] 滚动后应该能抓到 1 year ago
                 m_year = re.search(r"1 year ago\s+(\d+)", normalized_text, re.IGNORECASE)
                 if m_year: year_ago = int(m_year.group(1))
                 
@@ -220,18 +219,13 @@ class MacroDataScraper:
                         "前值": prev_close,
                         "一周前": week_ago,
                         "一月前": month_ago,
-                        "一年前": year_ago, # 可能为 0
+                        "一年前": year_ago,
                         "description": "CNN Fear & Greed Index"
                     }
-                    print(f"✅ [{name}] 抓取成功! 当前值: {current_val} (前值:{prev_close}, 1周:{week_ago})")
+                    print(f"✅ [{name}] 抓取成功! 当前值: {current_val} (前值:{prev_close}, 1年:{year_ago})")
                     return name, [record], None
                 else:
-                    # Debug 辅助
                     print(f"⚠️ 未找到当前值 (Current Value)。")
-                    key_index = normalized_text.lower().find("timeline")
-                    if key_index != -1:
-                        preview = normalized_text[max(0, key_index-50):min(len(normalized_text), key_index+100)]
-                        print(f"   [Debug Context] ...{preview}...")
                     raise ValueError("无法解析当前恐惧贪婪指数数值")
 
             except Exception as e:
@@ -246,6 +240,106 @@ class MacroDataScraper:
                     except:
                         pass
                         
+        return name, [], last_error
+
+    def fetch_cboe_data(self, name, url):
+        """
+        [新增] 抓取 CBOE Options Market Statistics
+        包含各类 Put/Call Ratios
+        """
+        max_retries = 3
+        last_error = None
+        
+        target_keys = [
+            "TOTAL PUT/CALL RATIO",
+            "INDEX PUT/CALL RATIO",
+            "EXCHANGE TRADED PRODUCTS PUT/CALL RATIO",
+            "EQUITY PUT/CALL RATIO",
+            "CBOE VOLATILITY INDEX (VIX) PUT/CALL RATIO",
+            "SPX + SPXW PUT/CALL RATIO",
+            "OEX PUT/CALL RATIO",
+            "MRUT PUT/CALL RATIO",
+            "MXEA PUT/CALL RATIO",
+            "MXEF PUT/CALL RATIO",
+            "MXACW PUT/CALL RATIO",
+            "MXWLD PUT/CALL RATIO",
+            "MXUSA PUT/CALL RATIO",
+            "CBTX PUT/CALL RATIO",
+            "MBTX PUT/CALL RATIO",
+            "SPEQX PUT/CALL RATIO",
+            "SPEQW PUT/CALL RATIO",
+            "MGTN PUT/CALL RATIO",
+            "MGTNW PUT/CALL RATIO"
+        ]
+
+        for attempt in range(1, max_retries + 1):
+            print(f"🌍 [{name}] 第 {attempt}/{max_retries} 次尝试 (Selenium - CBOE)...")
+            driver = None
+            try:
+                driver = webdriver.Chrome(options=self.chrome_options)
+                driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+                    "source": """Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"""
+                })
+                driver.set_page_load_timeout(45)
+                driver.get(url)
+                
+                # 等待关键字
+                try:
+                    WebDriverWait(driver, 20).until(
+                        EC.text_to_be_present_in_element((By.TAG_NAME, "body"), "TOTAL PUT/CALL RATIO")
+                    )
+                except:
+                    print(f"⚠️ [{name}] 等待关键字超时...")
+
+                body_text = driver.find_element(By.TAG_NAME, "body").text
+                normalized_text = re.sub(r'\s+', ' ', body_text).strip()
+                
+                records = []
+                current_date = pd.Timestamp.now().strftime('%Y-%m-%d')
+                
+                # 尝试从页面解析日期 (格式示例: 2026年1月9日)
+                date_match = re.search(r"(\d{4})年(\d{1,2})月(\d{1,2})日", normalized_text)
+                if date_match:
+                    try:
+                        y, m, d = date_match.groups()
+                        current_date = f"{y}-{int(m):02d}-{int(d):02d}"
+                    except:
+                        pass
+                
+                data_dict = {"日期": current_date}
+                
+                found_count = 0
+                for key in target_keys:
+                    # 正则匹配: KEY 后面跟数值
+                    # re.escape 处理 key 中的特殊字符如 + ( )
+                    pattern = re.escape(key) + r"\s+([\d\.]+)"
+                    match = re.search(pattern, normalized_text)
+                    if match:
+                        val = float(match.group(1))
+                        data_dict[key] = val
+                        found_count += 1
+                    else:
+                        # 未找到则设为 None
+                        data_dict[key] = None
+                
+                if found_count > 0:
+                    records.append(data_dict)
+                    print(f"✅ [{name}] 抓取成功! 获得 {found_count} 个指标, 日期: {current_date}")
+                    return name, records, None
+                else:
+                    raise ValueError("未匹配到任何 Put/Call Ratio 数据")
+
+            except Exception as e:
+                last_error = str(e)
+                print(f"❌ [{name}] 失败: {str(e)[:100]}")
+                if attempt < max_retries:
+                    time.sleep(2)
+            finally:
+                if driver:
+                    try:
+                        driver.quit()
+                    except:
+                        pass
         return name, [], last_error
 
     def fetch_investing_source(self, name, url):
@@ -367,6 +461,9 @@ class MacroDataScraper:
         
         if name == "CNN_FearGreed":
             return self.fetch_cnn_fear_greed(name, url)
+            
+        if name == "CBOE_PutCallRatio":
+            return self.fetch_cboe_data(name, url)
 
         max_retries = 5
         days_to_keep = 30 if "南向资金" in name else 180
