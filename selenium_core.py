@@ -132,7 +132,7 @@ class MacroDataScraper:
         专门抓取 CNN Fear & Greed Index
         结构: Timeline -> Current -> Previous close -> 1 week ago -> 1 month ago -> 1 year ago
         """
-        max_retries = 5  # [修改] 增加重试次数到5次
+        max_retries = 5
         last_error = None
         
         for attempt in range(1, max_retries + 1):
@@ -145,13 +145,19 @@ class MacroDataScraper:
                     "source": """Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"""
                 })
 
-                # [新增] 设置大窗口以确保桌面布局，防止Timeline被折叠
+                # 设置大窗口以确保桌面布局，防止Timeline被折叠
                 driver.set_window_size(1920, 1080)
                 
                 driver.set_page_load_timeout(45)
                 driver.get(url)
+
+                # [新增] 打印页面标题以便调试 (判断是否被反爬或跳转)
+                try:
+                    print(f"   [Debug] Page Title: {driver.title}")
+                except:
+                    pass
                 
-                # [新增] 稍微滚动一下页面，触发可能存在的懒加载
+                # 稍微滚动一下页面，触发可能存在的懒加载
                 try:
                     driver.execute_script("window.scrollBy(0, 500);")
                     time.sleep(2)
@@ -160,17 +166,16 @@ class MacroDataScraper:
                 
                 # 等待关键字出现
                 try:
-                    # 尝试等待 Timeline 关键字，但也允许直接解析 body
                     WebDriverWait(driver, 20).until(
                         EC.text_to_be_present_in_element((By.TAG_NAME, "body"), "Timeline")
                     )
                 except:
-                    print(f"⚠️ [{name}] 等待页面关键字超时，尝试直接解析全文...")
+                    print(f"⚠️ [{name}] 等待页面关键字 'Timeline' 超时...")
                 
                 body_text = driver.find_element(By.TAG_NAME, "body").text
+                print(f"   [Debug] Body text length: {len(body_text)}")
                 
-                # [新增] 文本规范化：将所有空白字符(换行、制表符等)替换为单个空格
-                # 这样可以忽略网页布局变化导致的换行位置差异
+                # 文本规范化：将所有空白字符(换行、制表符等)替换为单个空格
                 normalized_text = re.sub(r'\s+', ' ', body_text).strip()
                 
                 # 使用正则匹配文本块 (Case Insensitive)
@@ -198,14 +203,28 @@ class MacroDataScraper:
                     print(f"✅ [{name}] 抓取成功! 当前值: {current_val}")
                     return name, [record], None
                 else:
-                    # 如果匹配失败，记录前500个字符用于调试（可选，这里为了简洁不输出太多）
+                    # [新增] 增强调试打印
+                    print(f"⚠️ 正则匹配失败。")
+                    
+                    # 尝试查找 "Timeline" 关键字的位置
+                    key_index = normalized_text.lower().find("timeline")
+                    if key_index != -1:
+                        # 打印关键字附近的内容 (上下文)
+                        start = max(0, key_index - 20)
+                        end = min(len(normalized_text), key_index + 150)
+                        preview = normalized_text[start:end]
+                        print(f"   [Debug Context] ...{preview}...")
+                    else:
+                        # 如果找不到关键字，打印开头部分
+                        print(f"   [Debug Head] 未找到 'Timeline'。页面开头: {normalized_text[:100]}...")
+
                     raise ValueError("页面内容未匹配到预期的 Timeline 数据结构")
 
             except Exception as e:
                 last_error = str(e)
                 print(f"❌ [{name}] 失败: {str(e)[:100]}")
                 if attempt < max_retries:
-                    time.sleep(3) # 稍微增加等待时间
+                    time.sleep(3)
             finally:
                 if driver:
                     try:
