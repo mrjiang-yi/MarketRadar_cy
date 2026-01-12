@@ -31,7 +31,8 @@ class MacroDataScraper:
             "美国_核心零售销售月率": "https://data.eastmoney.com/cjsj/foreign_0_9.html",
             "美国_利率决议": "https://data.eastmoney.com/cjsj/foreign_8_0.html",
             "日本_央行利率决议": "https://data.eastmoney.com/cjsj/foreign_3_0.html",
-            "恒生医疗保健指数": "https://cn.investing.com/indices/hang-seng-healthcare-historical-data"
+            "恒生医疗保健指数": "https://cn.investing.com/indices/hang-seng-healthcare-historical-data",
+            "CNN_FearGreed": "https://edition.cnn.com/markets/fear-and-greed"
         }
 
         self.key_mapping = {
@@ -46,7 +47,8 @@ class MacroDataScraper:
             "美国_核心零售销售月率": ("usa", "零售销售月率"),
             "美国_利率决议": ("usa", "利率决议"),
             "日本_央行利率决议": ("japan", "央行利率"),
-            "恒生医疗保健指数": ("hk", "恒生医疗保健指数")
+            "恒生医疗保健指数": ("hk", "恒生医疗保健指数"),
+            "CNN_FearGreed": ("market_fx", "CNN_FearGreed")
         }
         
         self.results = {}
@@ -124,6 +126,89 @@ class MacroDataScraper:
             return float(pct_str.replace('%', '').replace(',', ''))
         except:
             return 0.0
+
+    def fetch_cnn_fear_greed(self, name, url):
+        """
+        专门抓取 CNN Fear & Greed Index
+        结构: Timeline -> Current -> Previous close -> 1 week ago -> 1 month ago -> 1 year ago
+        """
+        max_retries = 3
+        last_error = None
+        
+        for attempt in range(1, max_retries + 1):
+            print(f"🌍 [{name}] 第 {attempt}/{max_retries} 次尝试 (Selenium - CNN)...")
+            driver = None
+            try:
+                driver = webdriver.Chrome(options=self.chrome_options)
+                
+                driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+                    "source": """Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"""
+                })
+
+                driver.set_page_load_timeout(45) # CNN页面可能较重，增加超时
+                driver.get(url)
+                
+                # 等待关键字出现
+                try:
+                    WebDriverWait(driver, 20).until(
+                        EC.text_to_be_present_in_element((By.TAG_NAME, "body"), "Timeline")
+                    )
+                except:
+                    print(f"⚠️ [{name}] 等待页面关键字超时，尝试直接解析...")
+                
+                body_text = driver.find_element(By.TAG_NAME, "body").text
+                
+                # 使用正则匹配文本块
+                # 目标结构示例:
+                # Timeline
+                # 51
+                # Previous close
+                # 50
+                # 1 week ago
+                # 47
+                # 1 month ago
+                # 42
+                # 1 year ago
+                # 25
+                
+                pattern = r"Timeline\s+(\d+)\s+Previous close\s+(\d+)\s+1 week ago\s+(\d+)\s+1 month ago\s+(\d+)\s+1 year ago\s+(\d+)"
+                match = re.search(pattern, body_text)
+                
+                if match:
+                    current_val = int(match.group(1))
+                    prev_close = int(match.group(2))
+                    week_ago = int(match.group(3))
+                    month_ago = int(match.group(4))
+                    year_ago = int(match.group(5))
+                    
+                    record = {
+                        "日期": pd.Timestamp.now().strftime('%Y-%m-%d'),
+                        "最新值": current_val,
+                        "前值": prev_close,
+                        "一周前": week_ago,
+                        "一月前": month_ago,
+                        "一年前": year_ago,
+                        "description": "CNN Fear & Greed Index"
+                    }
+                    
+                    print(f"✅ [{name}] 抓取成功! 当前值: {current_val}")
+                    return name, [record], None
+                else:
+                    raise ValueError("页面内容未匹配到预期的 Timeline 数据结构")
+
+            except Exception as e:
+                last_error = str(e)
+                print(f"❌ [{name}] 失败: {str(e)[:100]}")
+                if attempt < max_retries:
+                    time.sleep(2)
+            finally:
+                if driver:
+                    try:
+                        driver.quit()
+                    except:
+                        pass
+                        
+        return name, [], last_error
 
     def fetch_investing_source(self, name, url):
         max_retries = 5
@@ -241,6 +326,9 @@ class MacroDataScraper:
     def fetch_single_source(self, name, url):
         if name == "恒生医疗保健指数":
             return self.fetch_investing_source(name, url)
+        
+        if name == "CNN_FearGreed":
+            return self.fetch_cnn_fear_greed(name, url)
 
         max_retries = 5
         days_to_keep = 30 if "南向资金" in name else 180
@@ -378,7 +466,8 @@ class MacroDataScraper:
             "china": {},
             "usa": {},
             "japan": {},
-            "hk": {}
+            "hk": {},
+            "market_fx": {}
         }
         
         for old_key, data_list in self.results.items():
