@@ -25,11 +25,13 @@ def get_market_fx_and_bonds():
 
     # 1. Market FX
     # [修改] 汇率获取天数改为 15 天 (原为 1 天)
+    # [修改] 新增美元指数 (近10天)
     tickers_config = [
         {"name": "VIX恐慌指数", "ticker": "^VIX", "days": 15},
         {"name": "美元/人民币", "ticker": "CNY=X", "days": 15},
         {"name": "美元/日元", "ticker": "JPY=X", "days": 15},
-        {"name": "美元/越南盾", "ticker": "VND=X", "days": 15}
+        {"name": "美元/越南盾", "ticker": "VND=X", "days": 15},
+        {"name": "美元指数", "ticker": "DX=F", "days": 10} 
     ]
 
     for item in tickers_config:
