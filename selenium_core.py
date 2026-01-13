@@ -31,7 +31,6 @@ class MacroDataScraper:
             "BDI_波罗的海指数": "https://www.investing.com/indices/baltic-dry-historical-data",
             "USA_Initial_Jobless": "https://www.investing.com/economic-calendar/initial-jobless-claims-294",
             "CBOE_SKEW": "https://www.investing.com/indices/cboe-skew-historical-data",
-            "ICE_BofA_HighYield": "https://www.investing.com/indices/ice-bofa-us-high-yield-historical-data",
             "Insider_BuySell_Ratio_USA": "https://www.gurufocus.com/economic_indicators/4359/insider-buysell-ratio-usa-overall-market",
             "USA_ISM_New_Orders": "https://www.investing.com/economic-calendar/ism-manufacturing-new-orders-index-1483"
         }
@@ -56,7 +55,6 @@ class MacroDataScraper:
             "BDI_波罗的海指数": ("market_fx", "BDI_波罗的海指数"),
             "USA_Initial_Jobless": ("usa", "Initial_Jobless_Claims"),
             "CBOE_SKEW": ("market_fx", "CBOE_SKEW"),
-            "ICE_BofA_HighYield": ("market_fx", "ICE_BofA_HighYield"),
             "Insider_BuySell_Ratio_USA": ("usa", "Insider_BuySell_Ratio"),
             "USA_ISM_New_Orders": ("usa", "ISM_Manufacturing_New_Orders")
         }
@@ -87,7 +85,7 @@ class MacroDataScraper:
             return selenium_scrapers_investing.fetch_investing_source(name, url, self.chrome_options)
         
         # Investing.com 近 10 天数据组
-        if name in ["BDI_波罗的海指数", "CBOE_SKEW", "ICE_BofA_HighYield"]:
+        if name in ["BDI_波罗的海指数", "CBOE_SKEW"]:
             return selenium_scrapers_investing.fetch_investing_source(name, url, self.chrome_options, days_to_keep=10)
 
         # 2. Investing.com 财经日历数据
