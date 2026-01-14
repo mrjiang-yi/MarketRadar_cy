@@ -146,30 +146,48 @@ def calculate_ma(df, windows=[5, 10, 20, 60, 120, 250]):
 #         print(f"❌ 飞书推送异常: {e}")
 #         return False
 def send_to_feishu(webhook_url, report_data):
+    if not webhook_url:
+        print("⚠️ 提示: 未配置 FEISHU_WEBHOOK_URL，跳过推送")
+        return False
+
     try:
-        # 注意：这里对应你 main.py 里的 "market_klines" 键名
+        # 1. 核心数据源：对应 main.py 里的 merged["market_klines"]
         all_klines = report_data.get("market_klines", {})
         
-        # 定义你想要在飞书预览中显示的板块优先级
-        display_categories = ["全球核心指数", "恒生科技", "港股创新药", "大宗商品", "美股七巨头"]
+        # 2. 构造预览内容
+        # 我们按照你关注的顺序来排列分类
+        categories_to_show = ["全球核心指数", "恒生科技", "港股创新药", "大宗商品", "美股七巨头", "A股指数"]
         
         content_lines = []
-        for cat in display_categories:
-            items = all_klines.get(cat, [])
-            if items:
-                # 每个板块选最新的一条数据展示
-                for stock in items:
-                    # 假设每个 stock 字典里有 name, close, change_pct
-                    # 注意：如果 items 里的数据还没计算涨跌幅，需要在这里逻辑处理
-                    name = stock.get('name', '未知')
-                    price = stock.get('close', 0)
-                    # 尝试获取涨跌幅，如果没有则不显示
-                    chg = stock.get('change_pct', 0) 
-                    
-                    icon = "🔺" if chg >= 0 else "🔻"
-                    content_lines.append([{"tag": "text", "text": f"• {name}: {price} ({icon}{abs(chg)}%)"}])
+        for cat_name in categories_to_show:
+            items = all_klines.get(cat_name, [])
+            if not items: continue
+            
+            # 添加分类标题
+            content_lines.append([{"tag": "text", "text": f"--- {cat_name} ---"}])
+            
+            # 每个分类提取标的
+            for item in items:
+                name = item.get('name', '未知')
+                close = item.get('close', 0)
+                # 计算涨跌幅 (如果原始数据没给，这里通过 close/open 估算，或者直接取数据里的 change)
+                # 假设 item 里有 'change' 字段
+                chg = item.get('change', 0) 
+                
+                # 🎯 修复箭头逻辑：正数为红向上，负数为绿向下 (符合国内习惯)
+                if chg > 0:
+                    icon = "🔺" 
+                    color_text = f"+{chg}%"
+                elif chg < 0:
+                    icon = "🔻"
+                    color_text = f"{chg}%"
+                else:
+                    icon = "🔹"
+                    color_text = "0.00%"
 
-        # 构造飞书消息体
+                content_lines.append([{"tag": "text", "text": f"• {name}: {close} ({icon} {color_text})"}])
+
+        # 3. 构造飞书消息体
         payload = {
             "msg_type": "post",
             "content": {
@@ -177,18 +195,22 @@ def send_to_feishu(webhook_url, report_data):
                     "zh_cn": {
                         "title": f"📈 MarketRadar 市场动态 ({report_data.get('meta', {}).get('generated_at', '今日')})",
                         "content": [
-                            [{"tag": "text", "text": "核心标的快照："}]
-                        ] + content_lines[:15] + [ # 最多显示15行防止刷屏
-                            [{"tag": "text", "text": "---------------------------"}] ,
-                            [{"tag": "text", "text": "详细均线及信号分析请查看附件 JSON 或邮件。"}]
+                            [{"tag": "text", "text": "数据快照预览："}]
+                        ] + content_lines[:20] + [ # 限制长度防止飞书消息过长报错
+                            [{"tag": "text", "text": "\n(更多详细信号及银行/科创数据请查看邮件附件)"}]
                         ]
                     }
                 }
             }
         }
-        requests.post(webhook_url, json=payload, timeout=10)
+        
+        headers = {"Content-Type": "application/json"}
+        response = requests.post(webhook_url, json=payload, headers=headers, timeout=10)
+        return response.status_code == 200
+
     except Exception as e:
-        print(f"飞书推送报错: {e}")
+        print(f"❌ 飞书推送异常: {e}")
+        return False
 
 
 
