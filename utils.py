@@ -1,148 +1,16 @@
-#!/usr/bin/env python
-# -*- coding:utf-8 -*-
-"""
-MarketRadar/utils.py
-通用工具函数库：
-1. 技术指标计算 (移动平均线)
-2. 飞书富文本推送（增强版指标展示）
-"""
-
-import pandas as pd
-import numpy as np
-import requests
-import json
-
-def calculate_ma(df, windows=[5, 10, 20, 60, 120, 250]):
-    """
-    计算移动平均线
-    """
-    if df is None or df.empty or 'close' not in df.columns:
-        return []
-
-    df = df.sort_values('date').copy()
-    df['close'] = pd.to_numeric(df['close'], errors='coerce')
-    
-    # 计算涨跌幅 (基于前一天收盘价)
-    df['change_pct'] = df['close'].pct_change() * 100
-
-    if 'name' in df.columns:
-        groups = df.groupby('name')
-    else:
-        groups = [('Unknown', df)]
-
-    final_results = []
-    for name, group_df in groups:
-        if len(group_df) < 1:
-            continue
-            
-        latest_record = group_df.iloc[-1]
-        date_val = latest_record.get('date')
-        date_str = date_val.strftime('%Y-%m-%d') if isinstance(date_val, pd.Timestamp) else str(date_val)
-
-        # 基础数据
-        ma_data = {
-            "name": name,
-            "date": date_str,
-            "close": round(latest_record['close'], 2),
-            "change_pct": round(latest_record['change_pct'], 2) if pd.notna(latest_record['change_pct']) else 0.0
-        }
-
-        # 计算各周期 MA
-        for w in windows:
-            ma_series = group_df['close'].rolling(window=w).mean()
-            val = ma_series.iloc[-1]
-            ma_data[f"ma{w}"] = round(val, 2) if pd.notna(val) else None
-
-        final_results.append(ma_data)
-        
-    return final_results
-
-def send_to_feishu(webhook_url, report_data):
-    """
-    发送增强型富文本消息到飞书机器人
-    """
-    if not webhook_url:
-        print("⚠️ 提示: 未配置 FEISHU_WEBHOOK_URL，跳过推送")
-        return False
-
-    try:
-        # 获取自定义标的数据
-        custom_funds = report_data.get("market_kline", {}).get("自定义标的", [])
-        
-        # 1. 构造增强型指标预览文字
-        content_lines = []
-        for f in custom_funds[:12]:  # 展示前12个，涵盖你关注的主要标的
-            name = f.get('name', '未知')
-            price = f.get('close', 0.0)
-            chg = f.get('change_pct', 0.0)
-            ma20 = f.get('ma20')
-            ma60 = f.get('ma60')
-
-            # 涨跌幅图标
-            trend_icon = "🔺" if chg >= 0 else "🔻"
-            chg_str = f"{trend_icon}{abs(chg):.2f}%"
-            
-            # 均线状态判断 (Price vs MA20)
-            ma_status = ""
-            if ma20:
-                ma_status = " | [20日线上]" if price > ma20 else " | [20日线下]"
-            
-            # 组合成一行
-            line = f"• {name}: {price} ({chg_str}){ma_status}"
-            content_lines.append([{"tag": "text", "text": line}])
-
-        # 2. 构建飞书 Payload
-        report_date = report_data.get('report_date', 'Today')
-        payload = {
-            "msg_type": "post",
-            "content": {
-                "post": {
-                    "zh_cn": {
-                        "title": f"📈 MarketRadar 核心行情速报 ({report_date})",
-                        "content": [
-                            [{"tag": "text", "text": "✅ 今日自动化分析已完成。重点关注标的状态如下："}]
-                        ] + content_lines + [
-                            [{"tag": "text", "text": "---------------------------"}] ,
-                            [{"tag": "text", "text": "💡 均线状态提示短期支撑/压力位情况。"}],
-                            [{"tag": "text", "text": "📂 完整指标 JSON 与 Excel 报告已发送至邮箱。"}]
-                        ]
-                    }
-                }
-            }
-        }
-        
-        headers = {"Content-Type": "application/json"}
-        response = requests.post(webhook_url, data=json.dumps(payload), headers=headers, timeout=10)
-        
-        if response.status_code == 200:
-            print("🚀 飞书增强版消息发送成功！")
-            return True
-        else:
-            print(f"❌ 飞书推送失败: {response.text}")
-            return False
-    except Exception as e:
-        print(f"❌ 飞书推送异常: {e}")
-        return False
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# #!/usr/bin/env python
+# # -*- coding:utf-8 -*-
+# """
+# MarketRadar/utils.py
+# 通用工具函数库：
+# 1. 技术指标计算 (移动平均线)
+# 2. 飞书富文本推送（增强版指标展示）
+# """
 
 # import pandas as pd
 # import numpy as np
 # import requests
 # import json
-# import os
 
 # def calculate_ma(df, windows=[5, 10, 20, 60, 120, 250]):
 #     """
@@ -154,48 +22,36 @@ def send_to_feishu(webhook_url, report_data):
 #     df = df.sort_values('date').copy()
 #     df['close'] = pd.to_numeric(df['close'], errors='coerce')
     
+#     # 计算涨跌幅 (基于前一天收盘价)
+#     df['change_pct'] = df['close'].pct_change() * 100
+
 #     if 'name' in df.columns:
 #         groups = df.groupby('name')
 #     else:
 #         groups = [('Unknown', df)]
 
 #     final_results = []
-
 #     for name, group_df in groups:
 #         if len(group_df) < 1:
 #             continue
             
-#         latest_record = group_df.iloc[-1].to_dict()
-        
+#         latest_record = group_df.iloc[-1]
 #         date_val = latest_record.get('date')
-#         if isinstance(date_val, pd.Timestamp):
-#             date_str = date_val.strftime('%Y-%m-%d')
-#         else:
-#             date_str = str(date_val)
+#         date_str = date_val.strftime('%Y-%m-%d') if isinstance(date_val, pd.Timestamp) else str(date_val)
 
-#         # 计算涨跌幅 (相对于前一天)
-#         change_pct = 0.0
-#         if len(group_df) >= 2:
-#             prev_close = group_df['close'].iloc[-2]
-#             curr_close = group_df['close'].iloc[-1]
-#             if prev_close > 0:
-#                 change_pct = round((curr_close - prev_close) / prev_close * 100, 2)
-
+#         # 基础数据
 #         ma_data = {
-#             "名称": name,
-#             "日期": date_str,
-#             "收盘价": round(latest_record.get('close'), 2),
-#             "涨跌幅": f"{change_pct}%"
+#             "name": name,
+#             "date": date_str,
+#             "close": round(latest_record['close'], 2),
+#             "change_pct": round(latest_record['change_pct'], 2) if pd.notna(latest_record['change_pct']) else 0.0
 #         }
 
+#         # 计算各周期 MA
 #         for w in windows:
-#             col_name = f"{w}日均线"
 #             ma_series = group_df['close'].rolling(window=w).mean()
-#             latest_ma = ma_series.iloc[-1]
-#             if pd.notna(latest_ma):
-#                 ma_data[col_name] = round(latest_ma, 2)
-#             else:
-#                 ma_data[col_name] = None
+#             val = ma_series.iloc[-1]
+#             ma_data[f"ma{w}"] = round(val, 2) if pd.notna(val) else None
 
 #         final_results.append(ma_data)
         
@@ -203,68 +59,52 @@ def send_to_feishu(webhook_url, report_data):
 
 # def send_to_feishu(webhook_url, report_data):
 #     """
-#     发送消息到飞书
+#     发送增强型富文本消息到飞书机器人
 #     """
 #     if not webhook_url:
-#         print("⚠️ 未配置 FEISHU_WEBHOOK_URL，跳过推送")
+#         print("⚠️ 提示: 未配置 FEISHU_WEBHOOK_URL，跳过推送")
 #         return False
 
 #     try:
-#         # 提取日期
-#         report_date = report_data.get('meta', {}).get('generated_at', 'Unknown')[:10]
+#         # 获取自定义标的数据
+#         custom_funds = report_data.get("market_kline", {}).get("自定义标的", [])
         
-#         # 提取自定义标的 (用于在卡片中快速预览)
-#         custom_funds = report_data.get("market_klines", {}).get("自定义精选", [])
-        
-#         # 整理自定义标的预览文本 (取前 20 个，防止消息过长)
-#         preview_lines = []
-#         for f in custom_funds[:20]: 
-#             # 这里的 f 是 K线数据的 latest record，我们需要找到它的名字和最新收盘价
-#             # market_klines 结构是 {"自定义精选": [{date, name, close...}, {date, name, close...}]}
-#             # 但传入的 json 已经是 list of records，可能包含历史数据
-#             pass
+#         # 1. 构造增强型指标预览文字
+#         content_lines = []
+#         for f in custom_funds[:12]:  # 展示前12个，涵盖你关注的主要标的
+#             name = f.get('name', '未知')
+#             price = f.get('close', 0.0)
+#             chg = f.get('change_pct', 0.0)
+#             ma20 = f.get('ma20')
+#             ma60 = f.get('ma60')
 
-#         # 上面的 custom_funds 是所有历史数据的扁平列表，我们需要提取每个标的的最新一条
-#         # 更方便的是从 ma_data (技术分析) 中提取，因为 calculate_ma 已经只返回最新一条了
-#         ma_list = report_data.get("技术分析", {}).get("指数+个股日均线", [])
-        
-#         # 筛选出属于 "自定义精选" 的标的名称
-#         # 这里为了简单，我们直接遍历 ma_list，把几个关键的列出来
-        
-#         fund_preview = ""
-#         # 定义需要高亮关注的关键词
-#         keywords = ["ETF", "LOF", "保险", "稀土", "诺安", "人工智能", "有色"]
-        
-#         count = 0
-#         for item in ma_list:
-#             name = item.get("名称", "")
-#             if any(k in name for k in keywords):
-#                 price = item.get("收盘价", 0)
-#                 pct = item.get("涨跌幅", "0%")
-                
-#                 # 简单的 emoji 指示
-#                 icon = "🔴" if "-" not in str(pct) and pct != "0%" and pct != "0.0%" else "🟢"
-                
-#                 fund_preview += f"{icon} {name}: {price} ({pct})\n"
-#                 count += 1
-#                 if count >= 15: break # 限制显示数量
+#             # 涨跌幅图标
+#             trend_icon = "🔺" if chg >= 0 else "🔻"
+#             chg_str = f"{trend_icon}{abs(chg):.2f}%"
+            
+#             # 均线状态判断 (Price vs MA20)
+#             ma_status = ""
+#             if ma20:
+#                 ma_status = " | [20日线上]" if price > ma20 else " | [20日线下]"
+            
+#             # 组合成一行
+#             line = f"• {name}: {price} ({chg_str}){ma_status}"
+#             content_lines.append([{"tag": "text", "text": line}])
 
-#         if not fund_preview:
-#             fund_preview = "暂无相关标的数据"
-
-#         # 构造飞书卡片消息
+#         # 2. 构建飞书 Payload
+#         report_date = report_data.get('report_date', 'Today')
 #         payload = {
 #             "msg_type": "post",
 #             "content": {
 #                 "post": {
 #                     "zh_cn": {
-#                         "title": f"📊 MarketRadar 日报 ({report_date})",
+#                         "title": f"📈 MarketRadar 核心行情速报 ({report_date})",
 #                         "content": [
-#                             [{"tag": "text", "text": "✅ 数据抓取任务已完成 (Selenium/AkShare/YFinance)"}],
-#                             [{"tag": "text", "text": "\n【重点关注标的】:"}],
-#                             [{"tag": "text", "text": fund_preview}],
-#                             [{"tag": "text", "text": "\n详细 JSON 报告已生成并发送至邮箱。"}],
-#                             [{"tag": "a", "text": "查看 GitHub Actions", "href": "https://github.com/"}]
+#                             [{"tag": "text", "text": "✅ 今日自动化分析已完成。重点关注标的状态如下："}]
+#                         ] + content_lines + [
+#                             [{"tag": "text", "text": "---------------------------"}] ,
+#                             [{"tag": "text", "text": "💡 均线状态提示短期支撑/压力位情况。"}],
+#                             [{"tag": "text", "text": "📂 完整指标 JSON 与 Excel 报告已发送至邮箱。"}]
 #                         ]
 #                     }
 #                 }
@@ -272,18 +112,178 @@ def send_to_feishu(webhook_url, report_data):
 #         }
         
 #         headers = {"Content-Type": "application/json"}
-#         res = requests.post(webhook_url, data=json.dumps(payload), headers=headers, timeout=10)
+#         response = requests.post(webhook_url, data=json.dumps(payload), headers=headers, timeout=10)
         
-#         if res.status_code == 200:
-#             print("🚀 飞书推送成功！")
+#         if response.status_code == 200:
+#             print("🚀 飞书增强版消息发送成功！")
 #             return True
 #         else:
-#             print(f"❌ 飞书推送失败: {res.text}")
+#             print(f"❌ 飞书推送失败: {response.text}")
 #             return False
-
 #     except Exception as e:
 #         print(f"❌ 飞书推送异常: {e}")
 #         return False
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import pandas as pd
+import numpy as np
+import requests
+import json
+import os
+
+def calculate_ma(df, windows=[5, 10, 20, 60, 120, 250]):
+    """
+    计算移动平均线
+    """
+    if df is None or df.empty or 'close' not in df.columns:
+        return []
+
+    df = df.sort_values('date').copy()
+    df['close'] = pd.to_numeric(df['close'], errors='coerce')
+    
+    if 'name' in df.columns:
+        groups = df.groupby('name')
+    else:
+        groups = [('Unknown', df)]
+
+    final_results = []
+
+    for name, group_df in groups:
+        if len(group_df) < 1:
+            continue
+            
+        latest_record = group_df.iloc[-1].to_dict()
+        
+        date_val = latest_record.get('date')
+        if isinstance(date_val, pd.Timestamp):
+            date_str = date_val.strftime('%Y-%m-%d')
+        else:
+            date_str = str(date_val)
+
+        # 计算涨跌幅 (相对于前一天)
+        change_pct = 0.0
+        if len(group_df) >= 2:
+            prev_close = group_df['close'].iloc[-2]
+            curr_close = group_df['close'].iloc[-1]
+            if prev_close > 0:
+                change_pct = round((curr_close - prev_close) / prev_close * 100, 2)
+
+        ma_data = {
+            "名称": name,
+            "日期": date_str,
+            "收盘价": round(latest_record.get('close'), 2),
+            "涨跌幅": f"{change_pct}%"
+        }
+
+        for w in windows:
+            col_name = f"{w}日均线"
+            ma_series = group_df['close'].rolling(window=w).mean()
+            latest_ma = ma_series.iloc[-1]
+            if pd.notna(latest_ma):
+                ma_data[col_name] = round(latest_ma, 2)
+            else:
+                ma_data[col_name] = None
+
+        final_results.append(ma_data)
+        
+    return final_results
+
+def send_to_feishu(webhook_url, report_data):
+    """
+    发送消息到飞书
+    """
+    if not webhook_url:
+        print("⚠️ 未配置 FEISHU_WEBHOOK_URL，跳过推送")
+        return False
+
+    try:
+        # 提取日期
+        report_date = report_data.get('meta', {}).get('generated_at', 'Unknown')[:10]
+        
+        # 提取自定义标的 (用于在卡片中快速预览)
+        custom_funds = report_data.get("market_klines", {}).get("自定义精选", [])
+        
+        # 整理自定义标的预览文本 (取前 20 个，防止消息过长)
+        preview_lines = []
+        for f in custom_funds[:20]: 
+            # 这里的 f 是 K线数据的 latest record，我们需要找到它的名字和最新收盘价
+            # market_klines 结构是 {"自定义精选": [{date, name, close...}, {date, name, close...}]}
+            # 但传入的 json 已经是 list of records，可能包含历史数据
+            pass
+
+        # 上面的 custom_funds 是所有历史数据的扁平列表，我们需要提取每个标的的最新一条
+        # 更方便的是从 ma_data (技术分析) 中提取，因为 calculate_ma 已经只返回最新一条了
+        ma_list = report_data.get("技术分析", {}).get("指数+个股日均线", [])
+        
+        # 筛选出属于 "自定义精选" 的标的名称
+        # 这里为了简单，我们直接遍历 ma_list，把几个关键的列出来
+        
+        fund_preview = ""
+        # 定义需要高亮关注的关键词
+        keywords = ["ETF", "LOF", "保险", "稀土", "诺安", "人工智能", "有色"]
+        
+        count = 0
+        for item in ma_list:
+            name = item.get("名称", "")
+            if any(k in name for k in keywords):
+                price = item.get("收盘价", 0)
+                pct = item.get("涨跌幅", "0%")
+                
+                # 简单的 emoji 指示
+                icon = "🔴" if "-" not in str(pct) and pct != "0%" and pct != "0.0%" else "🟢"
+                
+                fund_preview += f"{icon} {name}: {price} ({pct})\n"
+                count += 1
+                if count >= 15: break # 限制显示数量
+
+        if not fund_preview:
+            fund_preview = "暂无相关标的数据"
+
+        # 构造飞书卡片消息
+        payload = {
+            "msg_type": "post",
+            "content": {
+                "post": {
+                    "zh_cn": {
+                        "title": f"📊 MarketRadar 日报 ({report_date})",
+                        "content": [
+                            [{"tag": "text", "text": "✅ 数据抓取任务已完成 (Selenium/AkShare/YFinance)"}],
+                            [{"tag": "text", "text": "\n【重点关注标的】:"}],
+                            [{"tag": "text", "text": fund_preview}],
+                            [{"tag": "text", "text": "\n详细 JSON 报告已生成并发送至邮箱。"}],
+                            [{"tag": "a", "text": "查看 GitHub Actions", "href": "https://github.com/"}]
+                        ]
+                    }
+                }
+            }
+        }
+        
+        headers = {"Content-Type": "application/json"}
+        res = requests.post(webhook_url, data=json.dumps(payload), headers=headers, timeout=10)
+        
+        if res.status_code == 200:
+            print("🚀 飞书推送成功！")
+            return True
+        else:
+            print(f"❌ 飞书推送失败: {res.text}")
+            return False
+
+    except Exception as e:
+        print(f"❌ 飞书推送异常: {e}")
+        return False
 
 
 
