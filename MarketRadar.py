@@ -1,133 +1,134 @@
-import os
-import requests
-import json
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
-import logging
-import warnings
-import socket
-import market_core
-import utils
+#原始
+# import os
+# import requests
+# import json
+# from datetime import datetime, timedelta
+# from zoneinfo import ZoneInfo
+# import logging
+# import warnings
+# import socket
+# import market_core
+# import utils
 
-# ================= 配置区域 =================
-ENABLE_EMAIL = True               
-SMTP_SERVER = "smtp.qq.com"       
-SMTP_PORT = 465                   
-SENDER_EMAIL = os.environ.get("SENDER_EMAIL")       
-SENDER_PASSWORD = os.environ.get("SENDER_PASSWORD") 
-RECEIVER_EMAIL = os.environ.get("RECEIVER_EMAIL")   
+# # ================= 配置区域 =================
+# ENABLE_EMAIL = True               
+# SMTP_SERVER = "smtp.qq.com"       
+# SMTP_PORT = 465                   
+# SENDER_EMAIL = os.environ.get("SENDER_EMAIL")       
+# SENDER_PASSWORD = os.environ.get("SENDER_PASSWORD") 
+# RECEIVER_EMAIL = os.environ.get("RECEIVER_EMAIL")   
 
-TZ_CN = ZoneInfo("Asia/Shanghai")
-NOW_CN = datetime.now(TZ_CN)
-REPORT_START_DATE = (NOW_CN - timedelta(days=20)).strftime("%Y-%m-%d")
-FETCH_START_DATE = (NOW_CN - timedelta(days=500)).strftime("%Y-%m-%d")
-END_DATE = NOW_CN.strftime("%Y-%m-%d")
+# TZ_CN = ZoneInfo("Asia/Shanghai")
+# NOW_CN = datetime.now(TZ_CN)
+# REPORT_START_DATE = (NOW_CN - timedelta(days=20)).strftime("%Y-%m-%d")
+# FETCH_START_DATE = (NOW_CN - timedelta(days=500)).strftime("%Y-%m-%d")
+# END_DATE = NOW_CN.strftime("%Y-%m-%d")
 
-# ------------------------------------------------
-# 1. 全球指数
-# ------------------------------------------------
-TARGETS_INDICES = {
-    "纳斯达克":     {"ak": ".NDX",    "yf": "^NDX",     "type": "index_us"},
-    "标普500":      {"ak": ".INX",    "yf": "^GSPC",    "type": "index_us"},
-    "恒生科技":     {"ak": "HSTECH",  "yf": "^HSTECH",  "type": "index_hk"},
-    "恒生指数":     {"ak": "HSI",     "yf": "^HSI",     "type": "index_hk"},
-    "VNM(ETF)":     {"ak": "VNM",     "yf": "VNM",      "type": "stock_us"},
-}
+# # ------------------------------------------------
+# # 1. 全球指数
+# # ------------------------------------------------
+# TARGETS_INDICES = {
+#     "纳斯达克":     {"ak": ".NDX",    "yf": "^NDX",     "type": "index_us"},
+#     "标普500":      {"ak": ".INX",    "yf": "^GSPC",    "type": "index_us"},
+#     "恒生科技":     {"ak": "HSTECH",  "yf": "^HSTECH",  "type": "index_hk"},
+#     "恒生指数":     {"ak": "HSI",     "yf": "^HSI",     "type": "index_hk"},
+#     "VNM(ETF)":     {"ak": "VNM",     "yf": "VNM",      "type": "stock_us"},
+# }
 
-# ------------------------------------------------
-# 2. 大宗商品
-# ------------------------------------------------
-TARGETS_COMMODITIES = {
-    "黄金(COMEX)":  {"ak": "GC",      "yf": "GC=F",     "type": "future_foreign"},  
-    "白银(COMEX)":  {"ak": "SI",      "yf": "SI=F",     "type": "future_foreign"},  
-    "铜(COMEX)":    {"ak": "HG",      "yf": "HG=F",     "type": "future_foreign"}, 
-    "上海金":       {"ak": "au0",     "yf": None,       "type": "future_zh_sina"}, 
-    "原油(WTI)":    {"ak": "CL",      "yf": "CL=F",     "type": "future_foreign"},
-}
+# # ------------------------------------------------
+# # 2. 大宗商品
+# # ------------------------------------------------
+# TARGETS_COMMODITIES = {
+#     "黄金(COMEX)":  {"ak": "GC",      "yf": "GC=F",     "type": "future_foreign"},  
+#     "白银(COMEX)":  {"ak": "SI",      "yf": "SI=F",     "type": "future_foreign"},  
+#     "铜(COMEX)":    {"ak": "HG",      "yf": "HG=F",     "type": "future_foreign"}, 
+#     "上海金":       {"ak": "au0",     "yf": None,       "type": "future_zh_sina"}, 
+#     "原油(WTI)":    {"ak": "CL",      "yf": "CL=F",     "type": "future_foreign"},
+# }
 
-# ------------------------------------------------
-# 3. 科技/医药
-# ------------------------------------------------
-TARGETS_TECH_HK = {
-    "腾讯控股":     {"ak": "00700", "yf": "0700.HK", "type": "stock_hk"},
-    "阿里巴巴-SW":  {"ak": "09988", "yf": "9988.HK", "type": "stock_hk"},
-    "美团-W":       {"ak": "03690", "yf": "3690.HK", "type": "stock_hk"},
-}
+# # ------------------------------------------------
+# # 3. 科技/医药
+# # ------------------------------------------------
+# TARGETS_TECH_HK = {
+#     "腾讯控股":     {"ak": "00700", "yf": "0700.HK", "type": "stock_hk"},
+#     "阿里巴巴-SW":  {"ak": "09988", "yf": "9988.HK", "type": "stock_hk"},
+#     "美团-W":       {"ak": "03690", "yf": "3690.HK", "type": "stock_hk"},
+# }
 
-TARGETS_US_GIANTS = {
-    "英伟达":  {"ak": None, "yf": "NVDA",  "type": "stock_us"},
-    "微软":    {"ak": None, "yf": "MSFT",  "type": "stock_us"},
-    "苹果":    {"ak": None, "yf": "AAPL",  "type": "stock_us"},
-    "特斯拉":  {"ak": None, "yf": "TSLA",  "type": "stock_us"},
-    "Google":  {"ak": None, "yf": "GOOGL", "type": "stock_us"},
-}
+# TARGETS_US_GIANTS = {
+#     "英伟达":  {"ak": None, "yf": "NVDA",  "type": "stock_us"},
+#     "微软":    {"ak": None, "yf": "MSFT",  "type": "stock_us"},
+#     "苹果":    {"ak": None, "yf": "AAPL",  "type": "stock_us"},
+#     "特斯拉":  {"ak": None, "yf": "TSLA",  "type": "stock_us"},
+#     "Google":  {"ak": None, "yf": "GOOGL", "type": "stock_us"},
+# }
 
-# ------------------------------------------------
-# 4. 【新增】自定义精选 (ETF/LOF/基金)
-# ------------------------------------------------
-# 说明: 
-# type="etf_zh": 场内ETF/LOF, 优先用AkShare fund_etf_hist_em
-# type="fund_open": 场外基金/部分LOF, 使用 AkShare fund_open_fund_info_em (净值)
-TARGETS_CUSTOM_SELECTION = {
-    "券商ETF":        {"ak": "512000", "yf": "512000.SS", "type": "etf_zh"},
-    "电网ETF":        {"ak": "561380", "yf": "561380.SS", "type": "etf_zh"},
-    "方正富邦保险A":  {"ak": "167301", "yf": "167301.SZ", "type": "fund_open"}, # 16开头LOF有时用fund_open数据更全
-    "嘉实稀土C":      {"ak": "011036", "yf": None,        "type": "fund_open"}, # 场外基金 0开头
-    "诺安成长混合C":  {"ak": "025333", "yf": None,        "type": "fund_open"}, # 场外基金
-    "天弘人工智能C":  {"ak": "011840", "yf": None,        "type": "fund_open"}, # 场外基金
-    "天弘银行ETF":    {"ak": "515290", "yf": "515290.SS", "type": "etf_zh"},
-    "沪深300ETF":     {"ak": "515330", "yf": "515330.SS", "type": "etf_zh"},
-    "油气ETF":        {"ak": "159697", "yf": "159697.SZ", "type": "etf_zh"},
-    "一带一路ETF":    {"ak": "515110", "yf": "515110.SS", "type": "etf_zh"},
-    "传媒ETF":        {"ak": "512980", "yf": "512980.SS", "type": "etf_zh"},
-    "有色金属行业":   {"ak": "160221", "yf": "160221.SZ", "type": "etf_zh"}, # LOF
-}
+# # ------------------------------------------------
+# # 4. 【新增】自定义精选 (ETF/LOF/基金)
+# # ------------------------------------------------
+# # 说明: 
+# # type="etf_zh": 场内ETF/LOF, 优先用AkShare fund_etf_hist_em
+# # type="fund_open": 场外基金/部分LOF, 使用 AkShare fund_open_fund_info_em (净值)
+# TARGETS_CUSTOM_SELECTION = {
+#     "券商ETF":        {"ak": "512000", "yf": "512000.SS", "type": "etf_zh"},
+#     "电网ETF":        {"ak": "561380", "yf": "561380.SS", "type": "etf_zh"},
+#     "方正富邦保险A":  {"ak": "167301", "yf": "167301.SZ", "type": "fund_open"}, # 16开头LOF有时用fund_open数据更全
+#     "嘉实稀土C":      {"ak": "011036", "yf": None,        "type": "fund_open"}, # 场外基金 0开头
+#     "诺安成长混合C":  {"ak": "025333", "yf": None,        "type": "fund_open"}, # 场外基金
+#     "天弘人工智能C":  {"ak": "011840", "yf": None,        "type": "fund_open"}, # 场外基金
+#     "天弘银行ETF":    {"ak": "515290", "yf": "515290.SS", "type": "etf_zh"},
+#     "沪深300ETF":     {"ak": "515330", "yf": "515330.SS", "type": "etf_zh"},
+#     "油气ETF":        {"ak": "159697", "yf": "159697.SZ", "type": "etf_zh"},
+#     "一带一路ETF":    {"ak": "515110", "yf": "515110.SS", "type": "etf_zh"},
+#     "传媒ETF":        {"ak": "512980", "yf": "512980.SS", "type": "etf_zh"},
+#     "有色金属行业":   {"ak": "160221", "yf": "160221.SZ", "type": "etf_zh"}, # LOF
+# }
 
 
-def get_all_kline_data():
-    """
-    执行所有K线抓取任务
-    """
-    print(f"📅 MarketRadar 启动抓取...")
+# def get_all_kline_data():
+#     """
+#     执行所有K线抓取任务
+#     """
+#     print(f"📅 MarketRadar 启动抓取...")
     
-    fetcher = market_core.MarketFetcher(FETCH_START_DATE, END_DATE)
+#     fetcher = market_core.MarketFetcher(FETCH_START_DATE, END_DATE)
     
-    all_data_collection = {
-        "meta": {
-            "generated_at": datetime.now(TZ_CN).strftime("%Y-%m-%d %H:%M:%S"),
-        },
-        "data": {},
-        "ma_data": {
-            "general": [],
-            "commodities": []
-        }
-    }
-    all_status_logs = []
+#     all_data_collection = {
+#         "meta": {
+#             "generated_at": datetime.now(TZ_CN).strftime("%Y-%m-%d %H:%M:%S"),
+#         },
+#         "data": {},
+#         "ma_data": {
+#             "general": [],
+#             "commodities": []
+#         }
+#     }
+#     all_status_logs = []
 
-    # 1. 抓取各组数据
-    groups = [
-        (TARGETS_INDICES, "指数", "general"),
-        (TARGETS_COMMODITIES, "大宗商品", "commodities"),
-        (TARGETS_TECH_HK, "港股科技", "general"),
-        (TARGETS_US_GIANTS, "美股巨头", "general"),
-        (TARGETS_CUSTOM_SELECTION, "自定义精选", "general") # 新增组
-    ]
+#     # 1. 抓取各组数据
+#     groups = [
+#         (TARGETS_INDICES, "指数", "general"),
+#         (TARGETS_COMMODITIES, "大宗商品", "commodities"),
+#         (TARGETS_TECH_HK, "港股科技", "general"),
+#         (TARGETS_US_GIANTS, "美股巨头", "general"),
+#         (TARGETS_CUSTOM_SELECTION, "自定义精选", "general") # 新增组
+#     ]
 
-    for targets, group_name, ma_type in groups:
-        data, ma, logs = market_core.fetch_group_data(fetcher, targets, group_name, REPORT_START_DATE, END_DATE)
-        all_data_collection["data"][group_name] = data
-        all_data_collection["ma_data"][ma_type].extend(ma)
-        all_status_logs.extend(logs)
+#     for targets, group_name, ma_type in groups:
+#         data, ma, logs = market_core.fetch_group_data(fetcher, targets, group_name, REPORT_START_DATE, END_DATE)
+#         all_data_collection["data"][group_name] = data
+#         all_data_collection["ma_data"][ma_type].extend(ma)
+#         all_status_logs.extend(logs)
 
-    print("\n🎉 数据采集完成！")
-    return all_data_collection, all_status_logs
+#     print("\n🎉 数据采集完成！")
+#     return all_data_collection, all_status_logs
 
-def send_email(subject, body, attachment_files):
-    market_core.send_email(subject, body, attachment_files, SENDER_EMAIL, SENDER_PASSWORD, RECEIVER_EMAIL, SMTP_SERVER, SMTP_PORT, ENABLE_EMAIL)
+# def send_email(subject, body, attachment_files):
+#     market_core.send_email(subject, body, attachment_files, SENDER_EMAIL, SENDER_PASSWORD, RECEIVER_EMAIL, SMTP_SERVER, SMTP_PORT, ENABLE_EMAIL)
 
-if __name__ == "__main__":
-    data, _ = get_all_kline_data()
-    print("Test Done.")
+# if __name__ == "__main__":
+#     data, _ = get_all_kline_data()
+#     print("Test Done.")
 
 
 
@@ -389,3 +390,155 @@ if __name__ == "__main__":
 #     with open(output_filename, 'w', encoding='utf-8') as f:
 #         json.dump(data, f, ensure_ascii=False, indent=4)
 #     print(f"✅ 数据已保存至 {output_filename}")
+
+
+
+
+
+
+
+
+
+
+import os
+import requests
+import json
+import pandas as pd
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+import logging
+import warnings
+import socket
+import market_core
+
+# ================= 稳定性增强设置 =================
+_original_request = requests.Session.request
+
+def _patched_request(self, method, url, *args, **kwargs):
+    if 'timeout' not in kwargs or kwargs['timeout'] is None:
+        kwargs['timeout'] = 15
+    return _original_request(self, method, url, *args, **kwargs)
+
+requests.Session.request = _patched_request
+socket.setdefaulttimeout(15)
+
+warnings.filterwarnings("ignore")
+logging.getLogger('yfinance').setLevel(logging.CRITICAL)
+
+# ================= 配置区域 =================
+ENABLE_EMAIL = True               
+SMTP_SERVER = "smtp.qq.com"       
+SMTP_PORT = 465                   
+SENDER_EMAIL = os.environ.get("SENDER_EMAIL")       
+SENDER_PASSWORD = os.environ.get("SENDER_PASSWORD") 
+RECEIVER_EMAIL = os.environ.get("RECEIVER_EMAIL")   
+
+TZ_CN = ZoneInfo("Asia/Shanghai")
+NOW_CN = datetime.now(TZ_CN)
+REPORT_START_DATE = (NOW_CN - timedelta(days=20)).strftime("%Y-%m-%d")
+FETCH_START_DATE = (NOW_CN - timedelta(days=500)).strftime("%Y-%m-%d")
+END_DATE = NOW_CN.strftime("%Y-%m-%d")
+
+# ------------------------------------------------
+# 1. 核心指数
+# ------------------------------------------------
+TARGETS_INDICES = {
+    "纳斯达克":     {"ak": ".NDX",    "yf": "^NDX",     "type": "index_us"},
+    "标普500":      {"ak": ".INX",    "yf": "^GSPC",    "type": "index_us"},
+    "恒生科技":     {"ak": "HSTECH",  "yf": "^HSTECH",  "type": "index_hk"},
+    "恒生指数":     {"ak": "HSI",     "yf": "^HSI",     "type": "index_hk"},
+    "VNM(ETF)":     {"ak": "VNM",     "yf": "VNM",      "type": "stock_us"},
+}
+
+# ------------------------------------------------
+# 2. 大宗商品
+# ------------------------------------------------
+TARGETS_COMMODITIES = {
+    "黄金(COMEX)":  {"ak": "GC",      "yf": "GC=F",     "type": "future_foreign"},  
+    "白银(COMEX)":  {"ak": "SI",      "yf": "SI=F",     "type": "future_foreign"},  
+    "铜(COMEX)":    {"ak": "HG",      "yf": "HG=F",     "type": "future_foreign"}, 
+    "上海金":       {"ak": "au0",     "yf": None,       "type": "future_zh_sina"}, 
+    "原油(WTI)":    {"ak": "CL",      "yf": "CL=F",     "type": "future_foreign"},
+}
+
+# ------------------------------------------------
+# 3. 科技/医药
+# ------------------------------------------------
+TARGETS_TECH_HK = {
+    "腾讯控股":     {"ak": "00700", "yf": "0700.HK", "type": "stock_hk"},
+    "阿里巴巴-SW":  {"ak": "09988", "yf": "9988.HK", "type": "stock_hk"},
+    "美团-W":       {"ak": "03690", "yf": "3690.HK", "type": "stock_hk"},
+}
+
+TARGETS_US_GIANTS = {
+    "英伟达":  {"ak": None, "yf": "NVDA",  "type": "stock_us"},
+    "微软":    {"ak": None, "yf": "MSFT",  "type": "stock_us"},
+    "苹果":    {"ak": None, "yf": "AAPL",  "type": "stock_us"},
+    "特斯拉":  {"ak": None, "yf": "TSLA",  "type": "stock_us"},
+}
+
+# ------------------------------------------------
+# 4. 【新增】自定义精选 (ETF/LOF/基金)
+# ------------------------------------------------
+TARGETS_CUSTOM_SELECTION = {
+    "券商ETF":        {"ak": "512000", "yf": "512000.SS", "type": "etf_zh"},
+    "电网ETF":        {"ak": "561380", "yf": "561380.SS", "type": "etf_zh"},
+    "方正富邦保险A":  {"ak": "167301", "yf": "167301.SZ", "type": "fund_open"}, 
+    "嘉实稀土C":      {"ak": "011036", "yf": None,        "type": "fund_open"}, 
+    "诺安成长混合C":  {"ak": "025333", "yf": None,        "type": "fund_open"}, 
+    "天弘人工智能C":  {"ak": "011840", "yf": None,        "type": "fund_open"}, 
+    "天弘银行ETF":    {"ak": "515290", "yf": "515290.SS", "type": "etf_zh"},
+    "沪深300ETF":     {"ak": "515330", "yf": "515330.SS", "type": "etf_zh"},
+    "油气ETF":        {"ak": "159697", "yf": "159697.SZ", "type": "etf_zh"},
+    "一带一路ETF":    {"ak": "515110", "yf": "515110.SS", "type": "etf_zh"},
+    "传媒ETF":        {"ak": "512980", "yf": "512980.SS", "type": "etf_zh"},
+    "有色金属行业":   {"ak": "160221", "yf": "160221.SZ", "type": "etf_zh"}, 
+}
+
+def get_all_kline_data():
+    """
+    执行所有K线抓取任务
+    """
+    print(f"📅 MarketRadar 启动抓取...")
+    
+    fetcher = market_core.MarketFetcher(FETCH_START_DATE, END_DATE)
+    
+    all_data_collection = {
+        "meta": {
+            "generated_at": datetime.now(TZ_CN).strftime("%Y-%m-%d %H:%M:%S"),
+        },
+        "data": {},
+        "ma_data": {
+            "general": [],
+            "commodities": []
+        }
+    }
+    all_status_logs = []
+
+    # 定义所有任务组 (字典, 组名, MA类型)
+    groups = [
+        (TARGETS_INDICES, "全球核心指数", "general"),
+        (TARGETS_COMMODITIES, "大宗商品", "commodities"),
+        (TARGETS_TECH_HK, "港股科技", "general"),
+        (TARGETS_US_GIANTS, "美股巨头", "general"),
+        # 🎯 关键修复：加入了自定义精选组
+        (TARGETS_CUSTOM_SELECTION, "自定义精选", "general") 
+    ]
+
+    for targets, group_name, ma_type in groups:
+        data, ma, logs = market_core.fetch_group_data(fetcher, targets, group_name, REPORT_START_DATE, END_DATE)
+        
+        # 存入数据
+        all_data_collection["data"][group_name] = data
+        all_data_collection["ma_data"][ma_type].extend(ma)
+        all_status_logs.extend(logs)
+
+    print("\n🎉 数据采集完成！")
+    return all_data_collection, all_status_logs
+
+def send_email(subject, body, attachment_files):
+    market_core.send_email(subject, body, attachment_files, SENDER_EMAIL, SENDER_PASSWORD, RECEIVER_EMAIL, SMTP_SERVER, SMTP_PORT, ENABLE_EMAIL)
+
+if __name__ == "__main__":
+    data, _ = get_all_kline_data()
+    print("Test Done.")
