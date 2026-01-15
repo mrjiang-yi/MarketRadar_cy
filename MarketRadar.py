@@ -484,7 +484,7 @@ TARGETS_CUSTOM_SELECTION = {
     "券商ETF":        {"ak": "512000", "yf": "512000.SS", "type": "etf_zh"},
     "电网ETF":        {"ak": "561380", "yf": "561380.SS", "type": "etf_zh"},
     "方正富邦保险A":  {"ak": "167301", "yf": "167301.SZ", "type": "fund_open"}, 
-    "嘉实稀土C":      {"ak": "011036", "yf": 516150.SH,        "type": "fund_open"}, 
+    "嘉实稀土C":      {"ak": "011036", "yf": "516150.SH",        "type": "fund_open"}, 
     "诺安成长混合C":  {"ak": "025333", "yf": None,        "type": "fund_open"}, 
     "天弘人工智能C":  {"ak": "011840", "yf": None,        "type": "fund_open"}, 
     "天弘银行ETF":    {"ak": "515290", "yf": "515290.SS", "type": "etf_zh"},
@@ -495,7 +495,7 @@ TARGETS_CUSTOM_SELECTION = {
     "有色金属行业":   {"ak": "160221", "yf": "160221.SZ", "type": "etf_zh"}, 
     "易方达科创50联接C":   {"ak": "011609", "yf": "588080.SH", "type": "etf_zh"}, 
      "科创50ETF":   {"ak": "588000", "yf": "588000.SH", "type": "etf_zh"}, 
-    "华安黄金ETF联接C":   {"ak": "000217", "yf": "None", "type": "etf_zh"}, 
+    "华安黄金ETF联接C":   {"ak": "000217", "yf": None, "type": "etf_zh"}, 
     "港股创新药ETF":   {"ak": "019671", "yf": "513120.SH", "type": "etf_zh"}, 
     "华夏恒生科技ETF联接":   {"ak": "013403", "yf": "513180.SH", "type": "etf_zh"}, 
 }
