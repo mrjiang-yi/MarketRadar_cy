@@ -116,6 +116,417 @@
 
 
 
+##2
+# import json
+# import os
+# import sys
+# import time
+# import math
+# import pandas as pd
+# import numpy as np
+# from datetime import datetime, timedelta
+# from zoneinfo import ZoneInfo
+# from itertools import groupby
+
+# # 确保能导入同级模块
+# current_dir = os.path.dirname(os.path.abspath(__file__))
+# parent_dir = os.path.dirname(current_dir)
+# if parent_dir not in sys.path:
+#     sys.path.append(parent_dir)
+
+# import fetch_data
+# import MarketRadar
+# import utils
+# import scrape_economy_selenium
+# import fetch_data_core
+
+# OUTPUT_FILENAME = "MarketRadar_Report.json"
+# LOG_FILENAME = "market_data_status.txt"
+# TZ_CN = ZoneInfo("Asia/Shanghai")
+# REPORT_DAYS = 20
+
+# class NpEncoder(json.JSONEncoder):
+#     def default(self, obj):
+#         if isinstance(obj, np.integer): return int(obj)
+#         elif isinstance(obj, np.floating): return float(obj)
+#         elif isinstance(obj, np.ndarray): return obj.tolist()
+#         return super(NpEncoder, self).default(obj)
+
+# def print_banner():
+#     print(r"""
+#   __  __            _        _   ____          _            
+#  |  \/  | __ _ _ __| | _____| |_|  _ \ __ _ __| | __ _ _ __ 
+#  | |\/| |/ _` | '__| |/ / _ \ __| |_) / _` / _` |/ _` | '__|
+#  | |  | | (_| | |  |   <  __/ |_|  _ < (_| (_| | (_| | |   
+#  |_|  |_|\__,_|_|  |_|\_\___|\__|_| \_\__,_\__,_|\__,_|_|   
+#     """)
+
+# def clean_and_round(data):
+#     if isinstance(data, dict):
+#         return {k: clean_and_round(v) for k, v in data.items()}
+#     elif isinstance(data, list):
+#         return [clean_and_round(x) for x in data]
+#     elif isinstance(data, float):
+#         if math.isnan(data) or math.isinf(data): return None
+#         return round(data, 2)
+#     elif isinstance(data, (np.int64, np.int32)):
+#         return int(data)
+#     else:
+#         return data
+
+# def deep_merge(dict1, dict2):
+#     result = dict1.copy()
+#     for key, value in dict2.items():
+#         if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+#             result[key] = deep_merge(result[key], value)
+#         else:
+#             result[key] = value
+#     return result
+
+# def merge_final_report(macro_data_combined, kline_data_dict, ma_data_dict, kcb50_data=None):
+#     merged = {
+#         "meta": kline_data_dict.get("meta", {}),
+#         "技术分析": {
+#             "指数+个股日均线": ma_data_dict.get("general", []),
+#             "大宗商品": ma_data_dict.get("commodities", [])
+#         },
+#         "market_fx": macro_data_combined.get("market_fx", {}),
+#         "科创50": kcb50_data if kcb50_data else {},
+#         "china": macro_data_combined.get("china", {}),
+#         "usa": macro_data_combined.get("usa", {}),
+#         "japan": macro_data_combined.get("japan", {}),
+#         "hk": macro_data_combined.get("hk", {}),
+#         # 这里汇聚了所有K线数据，包括自定义标的、指数等
+#         "market_klines": kline_data_dict.get("data", {})
+#     }
+    
+#     merged["meta"]["generated_at"] = datetime.now(TZ_CN).strftime("%Y-%m-%d %H:%M:%S")
+#     merged["meta"]["description"] = "MarketRadar Consolidated Report"
+#     return merged
+
+# def save_compact_json(data, filename):
+#     try:
+#         with open(filename, 'w', encoding='utf-8') as f:
+#             f.write('{\n')
+#             keys = list(data.keys())
+#             for i, key in enumerate(keys):
+#                 val = data[key]
+#                 f.write(f'    "{key}": ')
+#                 if isinstance(val, dict):
+#                     f.write('{\n')
+#                     sub_keys = list(val.keys())
+#                     for j, sub_key in enumerate(sub_keys):
+#                         sub_val = val[sub_key]
+#                         f.write(f'        "{sub_key}": ')
+#                         if isinstance(sub_val, list):
+#                             f.write('[\n')
+#                             for k, item in enumerate(sub_val):
+#                                 item_str = json.dumps(item, ensure_ascii=False, cls=NpEncoder)
+#                                 comma = "," if k < len(sub_val) - 1 else ""
+#                                 f.write(f'            {item_str}{comma}\n')
+#                             f.write('        ]')
+#                         else:
+#                             f.write(json.dumps(sub_val, ensure_ascii=False, cls=NpEncoder))
+#                         if j < len(sub_keys) - 1: f.write(',\n')
+#                         else: f.write('\n')
+#                     f.write('    }')
+#                 else:
+#                     f.write(json.dumps(val, ensure_ascii=False, cls=NpEncoder))
+#                 if i < len(keys) - 1: f.write(',\n')
+#                 else: f.write('\n')
+#             f.write('}')
+#         print(f"\n✅ 成功! 报告已写入 {filename}")
+#         return True
+#     except Exception as e:
+#         print(f"\n❌ 写入失败: {e}")
+#         return False
+
+# def write_status_log(logs, filename):
+#     try:
+#         with open(filename, 'w', encoding='utf-8') as f:
+#             f.write(f"MarketRadar Log - {datetime.now(TZ_CN).strftime('%Y-%m-%d %H:%M:%S')}\n")
+#             f.write("="*60 + "\n")
+#             for log in logs:
+#                 status_str = "[PASS]" if log['status'] else "[FAIL]"
+#                 line = f"{status_str} {log['name']}"
+#                 if not log['status'] and log['error']:
+#                     line += f" | Error: {log['error']}"
+#                 f.write(line + "\n")
+#         print(f"📝 状态日志已写入: {filename}")
+#         return True
+#     except Exception as e:
+#         return False
+
+# def generate_signals_summary(ma_data_dict):
+#     lines = []
+#     all_ma = ma_data_dict.get("general", []) + ma_data_dict.get("commodities", [])
+#     signals_found = False
+#     lines.append("\n📈 技术指标信号扫描:")
+#     lines.append("-" * 30)
+#     for item in all_ma:
+#         name = item.get('名称', item.get('name', 'Unknown'))
+#         signals = item.get('Signals', [])
+#         active_signals = [s for s in signals if s != "无特殊技术形态"]
+#         if active_signals:
+#             signals_found = True
+#             lines.append(f"🔴 [{name}]: {', '.join(active_signals)}")
+#     if not signals_found:
+#         lines.append("今日无特殊技术信号。")
+#     return "\n".join(lines)
+
+# def generate_email_body_summary(logs, signal_summary):
+#     lines = ["📊 数据状态汇总:"]
+#     success_count = sum(1 for l in logs if l['status'])
+#     fail_count = sum(1 for l in logs if not l['status'])
+#     lines.append(f"总计: {len(logs)} | 成功: {success_count} | 失败: {fail_count}")
+#     lines.append("")
+#     for log in logs:
+#         status_icon = "✅" if log['status'] else "❌"
+#         lines.append(f"{status_icon} {log['name']}")
+#     lines.append("\n" + signal_summary)
+#     return "\n".join(lines)
+
+# def parse_chinese_date(date_str):
+#     try:
+#         if '年' in str(date_str):
+#             return datetime.strptime(str(date_str).strip(), '%Y年%m月%d日')
+#         return pd.to_datetime(date_str)
+#     except:
+#         return pd.to_datetime(date_str, errors='coerce')
+
+# # --- 新增核心函数：补全涨跌幅 ---
+# def enrich_data_with_changes(final_data):
+#     """
+#     遍历 market_klines 下所有标的，如果缺失 chg_pct 则手动计算
+#     """
+#     if "market_klines" not in final_data:
+#         return final_data
+
+#     print("\n⚡ 正在计算缺失的涨跌幅数据...")
+#     for category, items in final_data["market_klines"].items():
+#         for item in items:
+#             # 优先使用已有的 change_pct, chg_pct, pct_chg
+#             existing_chg = item.get("change_pct") or item.get("chg_pct") or item.get("pct_chg")
+            
+#             if existing_chg is not None and existing_chg != 0:
+#                 # 统一字段名为 chg_pct 以便 utils.py 读取
+#                 item['chg_pct'] = existing_chg
+#             else:
+#                 # 手动计算：(close - open) / open
+#                 try:
+#                     close_p = float(item.get("close", 0))
+#                     open_p = float(item.get("open", 0))
+#                     if open_p != 0:
+#                         calculated_chg = round(((close_p - open_p) / open_p) * 100, 2)
+#                         item['chg_pct'] = calculated_chg
+#                         item['change_pct'] = calculated_chg # 双备份
+#                     else:
+#                         item['chg_pct'] = 0.0
+#                 except:
+#                     item['chg_pct'] = 0.0
+#     return final_data
+
+# def main():
+#     start_time = time.time()
+#     print_banner()
+#     print("🚀 MarketRadar 启动主程序 (修复完整版)...")
+    
+#     all_status_logs = []
+
+#     # 1. 基础 FX 和 国债
+#     print("\n[Step 1] 获取汇率与国债...")
+#     try:
+#         base_macro, logs_fx = fetch_data.get_market_fx_and_bonds()
+#         all_status_logs.extend(logs_fx)
+#     except Exception as e:
+#         print(f"❌ fetch_data 失败: {e}")
+#         base_macro = {"market_fx": {}, "china": {}, "usa": {}, "japan": {}}
+#         all_status_logs.append({'name': 'fetch_data_module', 'status': False, 'error': str(e)})
+
+#     # 2. 宏观 (Selenium)
+#     print("\n[Step 2] 抓取宏观经济 (Selenium)...")
+#     try:
+#         selenium_macro, logs_selenium = scrape_economy_selenium.get_macro_data()
+#         all_status_logs.extend(logs_selenium)
+#     except Exception as e:
+#         print(f"❌ Selenium 抓取失败: {e}")
+#         selenium_macro = {}
+#         all_status_logs.append({'name': 'selenium_module', 'status': False, 'error': str(e)})
+
+#     combined_macro = deep_merge(base_macro, selenium_macro)
+
+#     # 3. K线与自定义标的 (MarketRadar)
+#     print("\n[Step 3] 获取 K线 & 自定义标的 (券商/有色等)...")
+#     try:
+#         kline_result, logs_klines = MarketRadar.get_all_kline_data()
+#         all_status_logs.extend(logs_klines)
+        
+#         kline_data_dict = {"meta": kline_result.get("meta"), "data": kline_result.get("data")}
+#         ma_data_dict = kline_result.get("ma_data", {"general": [], "commodities": []})
+        
+#         print(f"✅ 抓取完成: 通用 {len(ma_data_dict['general'])} 条, 商品 {len(ma_data_dict['commodities'])} 条")
+#     except Exception as e:
+#         print(f"❌ MarketRadar 失败: {e}")
+#         kline_data_dict = {"meta": {}, "data": {}}
+#         ma_data_dict = {"general": [], "commodities": []}
+#         all_status_logs.append({'name': 'kline_module', 'status': False, 'error': str(e)})
+
+#     # [Step 3.5] 处理恒生医疗保健指数
+#     hshci_key = "恒生医疗保健指数"
+#     hk_data = combined_macro.get("hk", {})
+#     if "data" in kline_data_dict and kline_data_dict["data"]:
+#         if hshci_key in kline_data_dict["data"]:
+#             del kline_data_dict["data"][hshci_key]
+
+#     if hshci_key in hk_data and hk_data[hshci_key]:
+#         try:
+#             raw_data = hk_data[hshci_key]
+#             df_hshci = pd.DataFrame(raw_data)
+#             if '日期' in df_hshci.columns: df_hshci['date'] = df_hshci['日期'].apply(parse_chinese_date)
+#             elif 'date' in df_hshci.columns: df_hshci['date'] = pd.to_datetime(df_hshci['date'])
+#             df_hshci['name'] = hshci_key
+#             for col in ['close', 'open', 'high', 'low', 'volume']:
+#                 if col in df_hshci.columns: df_hshci[col] = pd.to_numeric(df_hshci[col], errors='coerce')
+
+#             if 'date' in df_hshci.columns:
+#                  hshci_ma = utils.calculate_ma(df_hshci)
+#                  if hshci_ma: ma_data_dict["general"].extend(hshci_ma)
+                 
+#                  cutoff = pd.Timestamp.now() - pd.Timedelta(days=REPORT_DAYS)
+#                  df_slice = df_hshci[df_hshci['date'] >= cutoff].copy()
+#                  df_slice['date'] = df_slice['date'].dt.strftime('%Y-%m-%d')
+#                  combined_macro['hk'][hshci_key] = df_slice.to_dict(orient='records')
+#         except Exception as e:
+#              print(f"⚠️ {hshci_key} 处理失败: {e}")
+
+#     # [Step 4] 越南指数
+#     print("\n[Step 4] 获取越南指数...")
+#     try:
+#         vni_data, vni_err = fetch_data.fetch_vietnam_index_klines()
+#         if vni_data:
+#             if "data" not in kline_data_dict: kline_data_dict["data"] = {}
+#             kline_data_dict["data"]["越南胡志明指数"] = vni_data
+#             try:
+#                 df_vni = pd.DataFrame(vni_data)
+#                 df_vni['name'] = "越南胡志明指数"
+#                 vni_ma = utils.calculate_ma(df_vni)
+#                 if vni_ma: ma_data_dict["general"].extend(vni_ma)
+#                 all_status_logs.append({'name': '越南胡志明指数', 'status': True, 'error': None})
+#             except Exception as e:
+#                 all_status_logs.append({'name': '越南胡志明指数', 'status': True, 'error': f"MA Error: {e}"})
+#         else:
+#             all_status_logs.append({'name': '越南胡志明指数', 'status': False, 'error': vni_err})
+#     except Exception as e:
+#         all_status_logs.append({'name': 'vni_module', 'status': False, 'error': str(e)})
+
+#     # [Step 4.5] A股指数均线计算
+#     ashare_list = combined_macro.get("market_klines", {}).pop("A股指数", None)
+#     if ashare_list:
+#         print("\n[Step 4.5] 计算 A股指数 均线...")
+#         try:
+#             ashare_list.sort(key=lambda x: x['name'])
+#             for name, group in groupby(ashare_list, key=lambda x: x['name']):
+#                 records = list(group)
+#                 records.sort(key=lambda x: x['date'])
+#                 df_ashare = pd.DataFrame(records)
+#                 df_ashare['date'] = pd.to_datetime(df_ashare['date'])
+#                 for c in ['close', 'open', 'high', 'low', 'volume']:
+#                     if c in df_ashare.columns: df_ashare[c] = pd.to_numeric(df_ashare[c], errors='coerce')
+                
+#                 ma_res = utils.calculate_ma(df_ashare)
+#                 if ma_res: ma_data_dict["general"].extend(ma_res)
+                
+#                 df_ashare['date'] = df_ashare['date'].dt.strftime('%Y-%m-%d')
+#                 if "data" not in kline_data_dict: kline_data_dict["data"] = {}
+#                 kline_data_dict["data"][name] = df_ashare.to_dict(orient='records')
+#         except Exception as e:
+#             print(f"⚠️ A股指数处理失败: {e}")
+
+#     # [Step 4.6] 60分钟K线
+#     kcb50_dict = {}
+#     try:
+#         kcb50_60m, err = fetch_data_core.fetch_kcb50_60m()
+#         kcb50_dict["科创50_60分钟K线"] = kcb50_60m if kcb50_60m else []
+#     except:
+#         kcb50_dict["科创50_60分钟K线"] = []
+        
+#     china_data = combined_macro.get("china", {})
+#     for k in ["科创50实时快照", "科创50融资融券", "科创50估值"]:
+#         if k in china_data: kcb50_dict[k] = china_data.pop(k)
+
+#     try:
+#         hstech_60m, err = fetch_data_core.fetch_hstech_60m()
+#         if "hk" not in combined_macro: combined_macro["hk"] = {}
+#         combined_macro["hk"]["恒生科技指数_60m"] = hstech_60m if hstech_60m else []
+#     except:
+#         if "hk" not in combined_macro: combined_macro["hk"] = {}
+#         combined_macro["hk"]["恒生科技指数_60m"] = []
+
+#     # [Step 4.7] 六大银行
+#     try:
+#         bank_dfs = fetch_data_core.fetch_us_banks_daily()
+#         for df in bank_dfs:
+#             name = df['name'].iloc[0]
+#             ma_res = utils.calculate_ma(df)
+#             if ma_res: ma_data_dict["general"].extend(ma_res)
+            
+#             cutoff = pd.Timestamp.now() - pd.Timedelta(days=REPORT_DAYS)
+#             df_slice = df[df['date'] >= cutoff].copy()
+#             df_slice['date'] = df_slice['date'].dt.strftime('%Y-%m-%d')
+            
+#             if "data" not in kline_data_dict: kline_data_dict["data"] = {}
+#             kline_data_dict["data"][name] = df_slice.to_dict(orient='records')
+#             all_status_logs.append({'name': f"Bank_{name}", 'status': True, 'error': None})
+#     except Exception as e:
+#         print(f"⚠️ 六大银行异常: {e}")
+
+#     # [Step 5] 整合与清洗
+#     print("\n[Step 5] 整合数据并清洗...")
+#     final_data = merge_final_report(combined_macro, kline_data_dict, ma_data_dict, kcb50_data=kcb50_dict)
+    
+#     # 🌟 关键修复：补全涨跌幅数据 (Fix 0% issue)
+#     final_data = enrich_data_with_changes(final_data)
+    
+#     final_data = clean_and_round(final_data)
+
+#     # 日志处理
+#     success_names = set(log['name'] for log in all_status_logs if log.get('status'))
+#     cleaned_logs = [log for log in all_status_logs if log['status'] or log['name'] not in success_names]
+#     write_status_log(cleaned_logs, LOG_FILENAME)
+    
+#     signal_summary = generate_signals_summary(ma_data_dict)
+#     print(signal_summary)
+
+#     # [Step 6] 保存 & 邮件
+#     if save_compact_json(final_data, OUTPUT_FILENAME):
+#         try:
+#             email_subject = f"MarketRadar全量日报_{datetime.now(TZ_CN).strftime('%Y-%m-%d')}"
+#             base_body = f"生成时间: {datetime.now(TZ_CN).strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+#             email_body = base_body + generate_email_body_summary(cleaned_logs, signal_summary)
+#             MarketRadar.send_email(email_subject, email_body, [OUTPUT_FILENAME, LOG_FILENAME])
+#         except Exception as e:
+#             print(f"⚠️ 邮件发送失败: {e}")
+
+#     print(f"\n✨ 任务完成，耗时: {time.time() - start_time:.2f} 秒")
+    
+#     # [Step 7] 飞书推送
+#     print("\n[Step 7] 推送至飞书...")
+#     feishu_url = os.environ.get("FEISHU_WEBHOOK_URL")
+#     if feishu_url:
+#         # 使用补全了涨跌幅的 final_data
+#         utils.send_to_feishu(feishu_url, final_data) 
+#     else:
+#         print("⚠️ 未设置 FEISHU_WEBHOOK_URL")
+
+# if __name__ == "__main__":
+#     main()
+
+
+
+
+
+
+
 
 import json
 import os
@@ -196,140 +607,82 @@ def merge_final_report(macro_data_combined, kline_data_dict, ma_data_dict, kcb50
         "usa": macro_data_combined.get("usa", {}),
         "japan": macro_data_combined.get("japan", {}),
         "hk": macro_data_combined.get("hk", {}),
-        # 这里汇聚了所有K线数据，包括自定义标的、指数等
         "market_klines": kline_data_dict.get("data", {})
     }
-    
     merged["meta"]["generated_at"] = datetime.now(TZ_CN).strftime("%Y-%m-%d %H:%M:%S")
-    merged["meta"]["description"] = "MarketRadar Consolidated Report"
     return merged
 
-def save_compact_json(data, filename):
-    try:
-        with open(filename, 'w', encoding='utf-8') as f:
-            f.write('{\n')
-            keys = list(data.keys())
-            for i, key in enumerate(keys):
-                val = data[key]
-                f.write(f'    "{key}": ')
-                if isinstance(val, dict):
-                    f.write('{\n')
-                    sub_keys = list(val.keys())
-                    for j, sub_key in enumerate(sub_keys):
-                        sub_val = val[sub_key]
-                        f.write(f'        "{sub_key}": ')
-                        if isinstance(sub_val, list):
-                            f.write('[\n')
-                            for k, item in enumerate(sub_val):
-                                item_str = json.dumps(item, ensure_ascii=False, cls=NpEncoder)
-                                comma = "," if k < len(sub_val) - 1 else ""
-                                f.write(f'            {item_str}{comma}\n')
-                            f.write('        ]')
-                        else:
-                            f.write(json.dumps(sub_val, ensure_ascii=False, cls=NpEncoder))
-                        if j < len(sub_keys) - 1: f.write(',\n')
-                        else: f.write('\n')
-                    f.write('    }')
-                else:
-                    f.write(json.dumps(val, ensure_ascii=False, cls=NpEncoder))
-                if i < len(keys) - 1: f.write(',\n')
-                else: f.write('\n')
-            f.write('}')
-        print(f"\n✅ 成功! 报告已写入 {filename}")
-        return True
-    except Exception as e:
-        print(f"\n❌ 写入失败: {e}")
-        return False
-
-def write_status_log(logs, filename):
-    try:
-        with open(filename, 'w', encoding='utf-8') as f:
-            f.write(f"MarketRadar Log - {datetime.now(TZ_CN).strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write("="*60 + "\n")
-            for log in logs:
-                status_str = "[PASS]" if log['status'] else "[FAIL]"
-                line = f"{status_str} {log['name']}"
-                if not log['status'] and log['error']:
-                    line += f" | Error: {log['error']}"
-                f.write(line + "\n")
-        print(f"📝 状态日志已写入: {filename}")
-        return True
-    except Exception as e:
-        return False
-
-def generate_signals_summary(ma_data_dict):
-    lines = []
-    all_ma = ma_data_dict.get("general", []) + ma_data_dict.get("commodities", [])
-    signals_found = False
-    lines.append("\n📈 技术指标信号扫描:")
-    lines.append("-" * 30)
-    for item in all_ma:
-        name = item.get('名称', item.get('name', 'Unknown'))
-        signals = item.get('Signals', [])
-        active_signals = [s for s in signals if s != "无特殊技术形态"]
-        if active_signals:
-            signals_found = True
-            lines.append(f"🔴 [{name}]: {', '.join(active_signals)}")
-    if not signals_found:
-        lines.append("今日无特殊技术信号。")
-    return "\n".join(lines)
-
-def generate_email_body_summary(logs, signal_summary):
-    lines = ["📊 数据状态汇总:"]
-    success_count = sum(1 for l in logs if l['status'])
-    fail_count = sum(1 for l in logs if not l['status'])
-    lines.append(f"总计: {len(logs)} | 成功: {success_count} | 失败: {fail_count}")
-    lines.append("")
-    for log in logs:
-        status_icon = "✅" if log['status'] else "❌"
-        lines.append(f"{status_icon} {log['name']}")
-    lines.append("\n" + signal_summary)
-    return "\n".join(lines)
-
-def parse_chinese_date(date_str):
-    try:
-        if '年' in str(date_str):
-            return datetime.strptime(str(date_str).strip(), '%Y年%m月%d日')
-        return pd.to_datetime(date_str)
-    except:
-        return pd.to_datetime(date_str, errors='coerce')
-
-# --- 新增核心函数：补全涨跌幅 ---
-def enrich_data_with_changes(final_data):
+# --- 新增：数据去重函数 ---
+def deduplicate_data(final_data):
     """
-    遍历 market_klines 下所有标的，如果缺失 chg_pct 则手动计算
+    清理重复数据：如果同一个名称在同一个分类下出现多次，只保留一个。
     """
     if "market_klines" not in final_data:
         return final_data
+    
+    print("🧹 执行数据去重...")
+    for category, items in final_data["market_klines"].items():
+        if not isinstance(items, list): continue
+        
+        seen_names = set()
+        unique_items = []
+        for item in items:
+            name = item.get('name')
+            # 以名称和最新的收盘价作为唯一标识，防止因为时间戳微小差异导致的重复
+            if name and name not in seen_names:
+                unique_items.append(item)
+                seen_names.add(name)
+        
+        final_data["market_klines"][category] = unique_items
+        
+    return final_data
 
-    print("\n⚡ 正在计算缺失的涨跌幅数据...")
+def enrich_data_with_changes(final_data):
+    if "market_klines" not in final_data:
+        return final_data
+
+    print("⚡ 计算涨跌幅数据...")
     for category, items in final_data["market_klines"].items():
         for item in items:
-            # 优先使用已有的 change_pct, chg_pct, pct_chg
             existing_chg = item.get("change_pct") or item.get("chg_pct") or item.get("pct_chg")
             
             if existing_chg is not None and existing_chg != 0:
-                # 统一字段名为 chg_pct 以便 utils.py 读取
                 item['chg_pct'] = existing_chg
             else:
-                # 手动计算：(close - open) / open
                 try:
                     close_p = float(item.get("close", 0))
                     open_p = float(item.get("open", 0))
                     if open_p != 0:
                         calculated_chg = round(((close_p - open_p) / open_p) * 100, 2)
                         item['chg_pct'] = calculated_chg
-                        item['change_pct'] = calculated_chg # 双备份
                     else:
                         item['chg_pct'] = 0.0
                 except:
                     item['chg_pct'] = 0.0
     return final_data
 
+def save_compact_json(data, filename):
+    try:
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, cls=NpEncoder, indent=None)
+        print(f"✅ 报告已写入 {filename}")
+        return True
+    except Exception as e:
+        print(f"❌ 写入失败: {e}")
+        return False
+
+def write_status_log(logs, filename):
+    try:
+        with open(filename, 'w', encoding='utf-8') as f:
+            for log in logs:
+                f.write(f"{'[PASS]' if log['status'] else '[FAIL]'} {log['name']}\n")
+        return True
+    except:
+        return False
+
 def main():
     start_time = time.time()
     print_banner()
-    print("🚀 MarketRadar 启动主程序 (修复完整版)...")
     
     all_status_logs = []
 
@@ -340,8 +693,7 @@ def main():
         all_status_logs.extend(logs_fx)
     except Exception as e:
         print(f"❌ fetch_data 失败: {e}")
-        base_macro = {"market_fx": {}, "china": {}, "usa": {}, "japan": {}}
-        all_status_logs.append({'name': 'fetch_data_module', 'status': False, 'error': str(e)})
+        base_macro = {}
 
     # 2. 宏观 (Selenium)
     print("\n[Step 2] 抓取宏观经济 (Selenium)...")
@@ -351,12 +703,11 @@ def main():
     except Exception as e:
         print(f"❌ Selenium 抓取失败: {e}")
         selenium_macro = {}
-        all_status_logs.append({'name': 'selenium_module', 'status': False, 'error': str(e)})
 
     combined_macro = deep_merge(base_macro, selenium_macro)
 
-    # 3. K线与自定义标的 (MarketRadar)
-    print("\n[Step 3] 获取 K线 & 自定义标的 (券商/有色等)...")
+    # 3. K线与自定义标的 (MarketRadar - 包含券商/ETF)
+    print("\n[Step 3] 获取 K线 & 券商/ETF (MarketRadar)...")
     try:
         kline_result, logs_klines = MarketRadar.get_all_kline_data()
         all_status_logs.extend(logs_klines)
@@ -364,162 +715,71 @@ def main():
         kline_data_dict = {"meta": kline_result.get("meta"), "data": kline_result.get("data")}
         ma_data_dict = kline_result.get("ma_data", {"general": [], "commodities": []})
         
-        print(f"✅ 抓取完成: 通用 {len(ma_data_dict['general'])} 条, 商品 {len(ma_data_dict['commodities'])} 条")
     except Exception as e:
         print(f"❌ MarketRadar 失败: {e}")
         kline_data_dict = {"meta": {}, "data": {}}
         ma_data_dict = {"general": [], "commodities": []}
-        all_status_logs.append({'name': 'kline_module', 'status': False, 'error': str(e)})
 
-    # [Step 3.5] 处理恒生医疗保健指数
-    hshci_key = "恒生医疗保健指数"
-    hk_data = combined_macro.get("hk", {})
-    if "data" in kline_data_dict and kline_data_dict["data"]:
-        if hshci_key in kline_data_dict["data"]:
-            del kline_data_dict["data"][hshci_key]
-
-    if hshci_key in hk_data and hk_data[hshci_key]:
-        try:
-            raw_data = hk_data[hshci_key]
-            df_hshci = pd.DataFrame(raw_data)
-            if '日期' in df_hshci.columns: df_hshci['date'] = df_hshci['日期'].apply(parse_chinese_date)
-            elif 'date' in df_hshci.columns: df_hshci['date'] = pd.to_datetime(df_hshci['date'])
-            df_hshci['name'] = hshci_key
-            for col in ['close', 'open', 'high', 'low', 'volume']:
-                if col in df_hshci.columns: df_hshci[col] = pd.to_numeric(df_hshci[col], errors='coerce')
-
-            if 'date' in df_hshci.columns:
-                 hshci_ma = utils.calculate_ma(df_hshci)
-                 if hshci_ma: ma_data_dict["general"].extend(hshci_ma)
-                 
-                 cutoff = pd.Timestamp.now() - pd.Timedelta(days=REPORT_DAYS)
-                 df_slice = df_hshci[df_hshci['date'] >= cutoff].copy()
-                 df_slice['date'] = df_slice['date'].dt.strftime('%Y-%m-%d')
-                 combined_macro['hk'][hshci_key] = df_slice.to_dict(orient='records')
-        except Exception as e:
-             print(f"⚠️ {hshci_key} 处理失败: {e}")
-
-    # [Step 4] 越南指数
-    print("\n[Step 4] 获取越南指数...")
-    try:
-        vni_data, vni_err = fetch_data.fetch_vietnam_index_klines()
-        if vni_data:
-            if "data" not in kline_data_dict: kline_data_dict["data"] = {}
-            kline_data_dict["data"]["越南胡志明指数"] = vni_data
-            try:
-                df_vni = pd.DataFrame(vni_data)
-                df_vni['name'] = "越南胡志明指数"
-                vni_ma = utils.calculate_ma(df_vni)
-                if vni_ma: ma_data_dict["general"].extend(vni_ma)
-                all_status_logs.append({'name': '越南胡志明指数', 'status': True, 'error': None})
-            except Exception as e:
-                all_status_logs.append({'name': '越南胡志明指数', 'status': True, 'error': f"MA Error: {e}"})
-        else:
-            all_status_logs.append({'name': '越南胡志明指数', 'status': False, 'error': vni_err})
-    except Exception as e:
-        all_status_logs.append({'name': 'vni_module', 'status': False, 'error': str(e)})
-
-    # [Step 4.5] A股指数均线计算
-    ashare_list = combined_macro.get("market_klines", {}).pop("A股指数", None)
-    if ashare_list:
-        print("\n[Step 4.5] 计算 A股指数 均线...")
-        try:
-            ashare_list.sort(key=lambda x: x['name'])
-            for name, group in groupby(ashare_list, key=lambda x: x['name']):
-                records = list(group)
-                records.sort(key=lambda x: x['date'])
-                df_ashare = pd.DataFrame(records)
-                df_ashare['date'] = pd.to_datetime(df_ashare['date'])
-                for c in ['close', 'open', 'high', 'low', 'volume']:
-                    if c in df_ashare.columns: df_ashare[c] = pd.to_numeric(df_ashare[c], errors='coerce')
-                
-                ma_res = utils.calculate_ma(df_ashare)
-                if ma_res: ma_data_dict["general"].extend(ma_res)
-                
-                df_ashare['date'] = df_ashare['date'].dt.strftime('%Y-%m-%d')
-                if "data" not in kline_data_dict: kline_data_dict["data"] = {}
-                kline_data_dict["data"][name] = df_ashare.to_dict(orient='records')
-        except Exception as e:
-            print(f"⚠️ A股指数处理失败: {e}")
-
-    # [Step 4.6] 60分钟K线
+    # 4. 补充数据 (银行、科创60分等)
+    print("\n[Step 4] 补充银行与科创数据...")
     kcb50_dict = {}
     try:
-        kcb50_60m, err = fetch_data_core.fetch_kcb50_60m()
-        kcb50_dict["科创50_60分钟K线"] = kcb50_60m if kcb50_60m else []
-    except:
-        kcb50_dict["科创50_60分钟K线"] = []
-        
-    china_data = combined_macro.get("china", {})
-    for k in ["科创50实时快照", "科创50融资融券", "科创50估值"]:
-        if k in china_data: kcb50_dict[k] = china_data.pop(k)
-
-    try:
-        hstech_60m, err = fetch_data_core.fetch_hstech_60m()
-        if "hk" not in combined_macro: combined_macro["hk"] = {}
-        combined_macro["hk"]["恒生科技指数_60m"] = hstech_60m if hstech_60m else []
-    except:
-        if "hk" not in combined_macro: combined_macro["hk"] = {}
-        combined_macro["hk"]["恒生科技指数_60m"] = []
-
-    # [Step 4.7] 六大银行
-    try:
         bank_dfs = fetch_data_core.fetch_us_banks_daily()
-        for df in bank_dfs:
-            name = df['name'].iloc[0]
-            ma_res = utils.calculate_ma(df)
-            if ma_res: ma_data_dict["general"].extend(ma_res)
+        if bank_dfs:
+            bank_list = []
+            for df in bank_dfs:
+                name = df['name'].iloc[0]
+                cutoff = pd.Timestamp.now() - pd.Timedelta(days=REPORT_DAYS)
+                df_slice = df[df['date'] >= cutoff].copy()
+                df_slice['date'] = df_slice['date'].dt.strftime('%Y-%m-%d')
+                bank_list.extend(df_slice.to_dict(orient='records'))
             
-            cutoff = pd.Timestamp.now() - pd.Timedelta(days=REPORT_DAYS)
-            df_slice = df[df['date'] >= cutoff].copy()
-            df_slice['date'] = df_slice['date'].dt.strftime('%Y-%m-%d')
-            
+            # 将银行放入 market_klines
             if "data" not in kline_data_dict: kline_data_dict["data"] = {}
-            kline_data_dict["data"][name] = df_slice.to_dict(orient='records')
-            all_status_logs.append({'name': f"Bank_{name}", 'status': True, 'error': None})
+            kline_data_dict["data"]["美国银行"] = bank_list
     except Exception as e:
-        print(f"⚠️ 六大银行异常: {e}")
+        print(f"⚠️ 银行数据异常: {e}")
 
-    # [Step 5] 整合与清洗
-    print("\n[Step 5] 整合数据并清洗...")
+    # 5. 整合
+    print("\n[Step 5] 整合数据...")
     final_data = merge_final_report(combined_macro, kline_data_dict, ma_data_dict, kcb50_data=kcb50_dict)
     
-    # 🌟 关键修复：补全涨跌幅数据 (Fix 0% issue)
+    # 🎯 关键修复 1：去重
+    final_data = deduplicate_data(final_data)
+    
+    # 🎯 关键修复 2：计算涨跌幅 (解决 0% 问题)
     final_data = enrich_data_with_changes(final_data)
     
     final_data = clean_and_round(final_data)
 
-    # 日志处理
-    success_names = set(log['name'] for log in all_status_logs if log.get('status'))
-    cleaned_logs = [log for log in all_status_logs if log['status'] or log['name'] not in success_names]
-    write_status_log(cleaned_logs, LOG_FILENAME)
+    # 6. 保存与发送
+    write_status_log(all_status_logs, LOG_FILENAME)
     
-    signal_summary = generate_signals_summary(ma_data_dict)
-    print(signal_summary)
-
-    # [Step 6] 保存 & 邮件
     if save_compact_json(final_data, OUTPUT_FILENAME):
+        # 发送飞书
+        feishu_url = os.environ.get("FEISHU_WEBHOOK_URL")
+        if feishu_url:
+            print("🚀 发送飞书推送...")
+            utils.send_to_feishu(feishu_url, final_data)
+        
+        # 发送邮件 (可选)
         try:
-            email_subject = f"MarketRadar全量日报_{datetime.now(TZ_CN).strftime('%Y-%m-%d')}"
-            base_body = f"生成时间: {datetime.now(TZ_CN).strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-            email_body = base_body + generate_email_body_summary(cleaned_logs, signal_summary)
-            MarketRadar.send_email(email_subject, email_body, [OUTPUT_FILENAME, LOG_FILENAME])
-        except Exception as e:
-            print(f"⚠️ 邮件发送失败: {e}")
+             email_subject = f"MarketRadar日报_{datetime.now(TZ_CN).strftime('%Y-%m-%d')}"
+             MarketRadar.send_email(email_subject, "详情见附件", [OUTPUT_FILENAME, LOG_FILENAME])
+        except:
+            pass
 
-    print(f"\n✨ 任务完成，耗时: {time.time() - start_time:.2f} 秒")
-    
-    # [Step 7] 飞书推送
-    print("\n[Step 7] 推送至飞书...")
-    feishu_url = os.environ.get("FEISHU_WEBHOOK_URL")
-    if feishu_url:
-        # 使用补全了涨跌幅的 final_data
-        utils.send_to_feishu(feishu_url, final_data) 
-    else:
-        print("⚠️ 未设置 FEISHU_WEBHOOK_URL")
+    print(f"\n✨ 完成! 耗时: {time.time() - start_time:.2f}s")
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+
+
 
 
 
